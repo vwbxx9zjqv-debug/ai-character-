@@ -1,0 +1,58 @@
+[project]
+name = "virtual-character-companion"
+version = "0.1.0"
+description = "AI Virtual Character Companion — Extensible backend with plugin architecture, event bus, and ESP32 support"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    # Web framework
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "websockets>=13.0",
+
+    # LLM / AI providers
+    "openai>=1.0.0",          # Whisper STT + OpenAI fallback
+    "anthropic>=0.49.0",      # Claude LLM
+
+    # TTS
+    "edge-tts>=6.1.0",       # Free TTS (built-in fallback)
+
+    # Database
+    "sqlalchemy[asyncio]>=2.0.0",
+    "aiosqlite>=0.20.0",
+
+    # Admin panel (fastapi-amis-admin)
+    "fastapi-amis-admin>=0.7.0",
+    "sqlmodel>=0.0.22",
+
+    # Audio processing
+    "numpy>=1.26.0",
+    "pydub>=0.25.0",
+
+    # Configuration & validation
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "pyyaml>=6.0.0",
+
+    # Utilities
+    "httpx>=0.28.0",
+    "python-multipart>=0.0.9",
+    "aiofiles>=24.0.0",
+]
+
+[project.optional-dependencies]
+# Phase 5: CosyVoice 2 — emotional TTS (install separately)
+# Phase 5: GPT-SoVITS — user voice model (install separately)
+# Local Whisper STT
+local-stt = ["faster-whisper>=1.0.0"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.8.0",
+    "mypy>=1.0.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

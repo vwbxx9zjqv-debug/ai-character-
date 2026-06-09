@@ -1,0 +1,149 @@
+"""
+Virtual Character Companion — FastAPI Application Entry Point.
+
+Startup sequence:
+1. Initialize database schema
+2. Discover and register built-in providers
+3. Activate default STT/LLM/TTS providers
+4. Start event bus subscribers
+5. Serve API + WebSocket + Admin panel
+
+Usage:
+    uv run uvicorn main:app --reload
+"""
+
+from __future__ import annotations
+
+import logging
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+
+from config import get_settings
+from db.database import init_db, close_db
+from core.plugin_manager import get_plugin_registry
+from core.event_bus import get_event_bus
+from routes import ws_chat, admin
+
+# ── Logging ───────────────────────────────────────────────────────
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger("main")
+
+# ── App Lifecycle ─────────────────────────────────────────────────
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application startup and shutdown."""
+    settings = get_settings()
+
+    # ── Startup ──────────────────────────────────────────────────
+    logger.info("=" * 60)
+    logger.info("Virtual Character Companion starting...")
+    logger.info(f"  DB: {settings.database_url}")
+
+    # 1. Initialize database
+    await init_db()
+
+    # 2. Discover providers
+    registry = get_plugin_registry()
+    registry.discover_builtin_providers()
+
+    # 3. Activate default providers
+    try:
+        await registry.activate_stt(
+            settings.default_stt,
+            {"model": settings.whisper_model, "language": settings.whisper_language}
+        )
+        logger.info(f"  STT: {registry.active_stt.display_name}")
+    except Exception as e:
+        logger.warning(f"  STT activation skipped: {e}")
+
+    try:
+        await registry.activate_llm(
+            settings.default_llm,
+            {"model": settings.claude_model, "temperature": settings.llm_temperature}
+        )
+        logger.info(f"  LLM: {registry.active_llm.display_name}")
+    except Exception as e:
+        logger.warning(f"  LLM activation skipped: {e}")
+
+    try:
+        await registry.activate_tts(settings.default_tts, {})
+        logger.info(f"  TTS: {registry.active_tts.display_name}")
+    except Exception as e:
+        logger.warning(f"  TTS activation skipped: {e}")
+
+    # 4. Start capabilities (conversation logger)
+    bus = get_event_bus()
+    from plugins.capabilities.conversation_logger import ConversationLogger
+    logger_plugin = ConversationLogger()
+    await logger_plugin.on_enable()
+
+    logger.info(f"  Event bus: {bus.event_count} events processed")
+    logger.info("Server ready! Listening on port " + str(settings.port))
+    logger.info("=" * 60)
+
+    yield  # ← App runs here
+
+    # ── Shutdown ─────────────────────────────────────────────────
+    logger.info("Shutting down...")
+    await close_db()
+
+
+# ── Application ───────────────────────────────────────────────────
+
+settings = get_settings()
+
+app = FastAPI(
+    title="Virtual Character Companion",
+    description="AI Virtual Character Companion — Extensible backend for ESP32 companion device",
+    version="0.1.0",
+    lifespan=lifespan,
+)
+
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ── Routes ────────────────────────────────────────────────────────
+
+app.include_router(ws_chat.router)
+app.include_router(admin.router)
+
+# Static files (admin panel + uploads)
+static_dir = Path(__file__).parent / "static"
+uploads_dir = Path(settings.upload_dir)
+uploads_dir.mkdir(parents=True, exist_ok=True)
+
+app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+app.mount("/uploads", StaticFiles(directory=str(uploads_dir)), name="uploads")
+
+
+# ── Health Check ──────────────────────────────────────────────────
+
+@app.get("/")
+async def root():
+    return {"name": "Virtual Character Companion", "version": "0.1.0", "status": "running"}
+
+
+@app.get("/health")
+async def health():
+    registry = get_plugin_registry()
+    return {
+        "status": "ok",
+        "stt": registry._active_stt.display_name if registry._active_stt else "not configured",
+        "llm": registry._active_llm.display_name if registry._active_llm else "not configured",
+        "tts": registry._active_tts.display_name if registry._active_tts else "not configured",
+    }

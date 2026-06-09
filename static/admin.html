@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>虚拟角色伴侣 — 管理后台</title>
+<style>
+:root {
+  --bg: #0f0f1a;
+  --surface: #1a1a2e;
+  --surface2: #252542;
+  --text: #e0e0f0;
+  --text2: #9090b0;
+  --accent: #7c5cfc;
+  --accent2: #a78bfa;
+  --accent-glow: rgba(124, 92, 252, 0.3);
+  --red: #f87171;
+  --green: #4ade80;
+  --yellow: #facc15;
+  --radius: 12px;
+  --radius-sm: 8px;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  line-height: 1.6;
+}
+
+/* ── Layout ──────────────────────────────── */
+.app {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  min-height: 100vh;
+}
+
+.sidebar {
+  background: var(--surface);
+  padding: 24px 16px;
+  border-right: 1px solid rgba(255,255,255,0.05);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sidebar .logo {
+  font-size: 1.2em;
+  font-weight: 700;
+  color: var(--accent2);
+  padding: 0 12px 20px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  margin-bottom: 12px;
+}
+
+.sidebar .logo span { font-size: 0.65em; color: var(--text2); display: block; font-weight: 400; }
+
+.nav-btn {
+  background: none; border: none; color: var(--text2);
+  padding: 10px 12px; border-radius: var(--radius-sm);
+  text-align: left; cursor: pointer; font-size: 0.9em;
+  transition: all 0.15s;
+}
+.nav-btn:hover { background: var(--surface2); color: var(--text); }
+.nav-btn.active { background: var(--accent); color: #fff; }
+
+.main {
+  padding: 32px 40px;
+  overflow-y: auto;
+  max-height: 100vh;
+}
+
+h2 { font-size: 1.6em; margin-bottom: 8px; }
+h3 { font-size: 1.1em; margin-bottom: 12px; color: var(--text2); }
+.section-header { margin-bottom: 24px; }
+.section-header p { color: var(--text2); font-size: 0.9em; }
+
+/* ── Cards & Grids ───────────────────────── */
+.card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 20px;
+  border: 1px solid rgba(255,255,255,0.05);
+}
+
+.grid-3 { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+/* ── Character Card ──────────────────────── */
+.char-card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 2px solid transparent;
+  transition: border-color 0.2s;
+}
+.char-card:hover { border-color: var(--accent-glow); }
+.char-card.active { border-color: var(--accent); }
+
+.char-preview {
+  height: 180px;
+  background: var(--surface2);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text2);
+  font-size: 3em;
+}
+.char-info { padding: 16px; }
+.char-info h4 { margin-bottom: 4px; }
+.char-info .tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.tag {
+  background: var(--surface2); color: var(--accent2);
+  padding: 2px 10px; border-radius: 20px; font-size: 0.75em;
+}
+.char-actions { display: flex; gap: 8px; padding: 0 16px 16px; }
+.btn {
+  padding: 8px 16px; border: none; border-radius: var(--radius-sm);
+  cursor: pointer; font-size: 0.85em; font-weight: 500;
+  transition: all 0.15s;
+}
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover { background: var(--accent2); }
+.btn-outline { background: none; border: 1px solid var(--surface2); color: var(--text); }
+.btn-outline:hover { background: var(--surface2); }
+.btn-danger { background: none; border: 1px solid var(--red); color: var(--red); }
+.btn-danger:hover { background: rgba(248,113,113,0.1); }
+.btn-sm { padding: 4px 12px; font-size: 0.8em; }
+
+/* ── Voice Card ──────────────────────────── */
+.voice-card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 20px;
+  border: 2px solid transparent;
+  transition: border-color 0.2s;
+}
+.voice-card:hover { border-color: var(--accent-glow); }
+.voice-card.active { border-color: var(--accent); }
+.voice-card .engine-badge {
+  display: inline-block; padding: 2px 8px;
+  background: var(--surface2); color: var(--accent2);
+  border-radius: 4px; font-size: 0.7em; margin-bottom: 8px;
+}
+
+/* ── Status Indicators ───────────────────── */
+.status-dot {
+  display: inline-block; width: 8px; height: 8px;
+  border-radius: 50%; margin-right: 6px;
+}
+.status-online { background: var(--green); box-shadow: 0 0 8px rgba(74,222,128,0.5); }
+.status-offline { background: #555; }
+
+/* ── Upload Area ─────────────────────────── */
+.upload-zone {
+  border: 2px dashed var(--surface2);
+  border-radius: var(--radius);
+  padding: 40px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+.upload-zone:hover { border-color: var(--accent); }
+.upload-zone.drag-over { border-color: var(--accent); background: rgba(124,92,252,0.05); }
+
+/* ── Form ────────────────────────────────── */
+.form-group { margin-bottom: 16px; }
+.form-group label { display: block; margin-bottom: 4px; font-size: 0.85em; color: var(--text2); }
+.form-group input, .form-group textarea, .form-group select {
+  width: 100%; padding: 10px 12px;
+  background: var(--bg); border: 1px solid var(--surface2);
+  border-radius: var(--radius-sm); color: var(--text);
+  font-size: 0.9em; font-family: inherit;
+}
+.form-group textarea { resize: vertical; min-height: 80px; }
+.form-group input:focus, .form-group textarea:focus, .form-group select:focus {
+  outline: none; border-color: var(--accent);
+}
+
+/* ── Tabs ────────────────────────────────── */
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
+/* ── Toast ───────────────────────────────── */
+.toast {
+  position: fixed; bottom: 24px; right: 24px;
+  padding: 12px 24px; border-radius: var(--radius-sm);
+  background: var(--surface2); color: var(--text);
+  box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+  animation: slideIn 0.3s ease;
+  z-index: 999;
+}
+@keyframes slideIn { from { transform: translateY(20px); opacity: 0; } }
+
+/* ── Responsive ──────────────────────────── */
+@media (max-width: 768px) {
+  .app { grid-template-columns: 1fr; }
+  .sidebar { flex-direction: row; overflow-x: auto; padding: 12px; }
+  .main { padding: 20px 16px; }
+  .grid-2, .grid-3 { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<div class="app">
+
+<!-- ── Sidebar ──────────────────────────────────────────── -->
+<nav class="sidebar">
+  <div class="logo">🎀 虚拟角色伴侣<span>管理后台 v0.1</span></div>
+  <button class="nav-btn active" data-tab="dashboard">📊 设备状态</button>
+  <button class="nav-btn" data-tab="characters">🎭 角色管理</button>
+  <button class="nav-btn" data-tab="voices">🎤 声音管理</button>
+  <button class="nav-btn" data-tab="upload">📤 上传模型</button>
+  <button class="nav-btn" data-tab="settings">⚙️ 系统设置</button>
+</nav>
+
+<!-- ── Main Content ─────────────────────────────────────── -->
+<main class="main">
+
+  <!-- Dashboard Tab -->
+  <section id="tab-dashboard" class="tab-content active">
+    <div class="section-header">
+      <h2>设备状态</h2>
+      <p>已连接的虚拟角色伴侣设备</p>
+    </div>
+    <div id="device-list" class="grid-3">
+      <div class="card" style="text-align:center;padding:40px">
+        <p style="color:var(--text2)">加载中...</p>
+      </div>
+    </div>
+
+    <h3 style="margin-top:32px">系统服务</h3>
+    <div id="provider-status" class="grid-3">
+      <div class="card"><h4>STT 语音识别</h4><p id="stt-status" style="color:var(--text2)">-</p></div>
+      <div class="card"><h4>LLM 对话模型</h4><p id="llm-status" style="color:var(--text2)">-</p></div>
+      <div class="card"><h4>TTS 语音合成</h4><p id="tts-status" style="color:var(--text2)">-</p></div>
+    </div>
+  </section>
+
+  <!-- Characters Tab -->
+  <section id="tab-characters" class="tab-content">
+    <div class="section-header">
+      <h2>🎭 角色管理</h2>
+      <p>管理虚拟角色的性格、外观和对话风格</p>
+    </div>
+    <div id="character-list" class="grid-3"></div>
+
+    <h3 style="margin-top:32px">创建新角色</h3>
+    <form id="create-character-form" class="card grid-2" style="margin-top:16px">
+      <div class="form-group">
+        <label>角色名称 *</label>
+        <input name="name" placeholder="星野 琉璃" required>
+      </div>
+      <div class="form-group">
+        <label>默认声音</label>
+        <select name="default_voice_id">
+          <option value="edge_xiaoxiao">小晓 (活泼少女)</option>
+          <option value="edge_yunxi">云希 (元气少年)</option>
+          <option value="edge_xiaoyi">小依 (温柔知性)</option>
+          <option value="edge_yunjian">云健 (成熟男声)</option>
+        </select>
+      </div>
+      <div class="form-group" style="grid-column: span 2">
+        <label>性格描述 *</label>
+        <textarea name="personality" placeholder="表面冷漠但内心温柔。对不熟的人话很少..." required></textarea>
+      </div>
+      <div class="form-group">
+        <label>称呼用户为</label>
+        <input name="name_call" value="主人">
+      </div>
+      <div class="form-group">
+        <label>默认心情</label>
+        <select name="default_mood">
+          <option value="neutral">平静</option><option value="happy">开心</option>
+          <option value="gentle">温柔</option><option value="cool">冷静</option>
+          <option value="energetic">元气</option>
+        </select>
+      </div>
+      <div class="form-group" style="grid-column: span 2">
+        <label>说话风格</label>
+        <textarea name="speaking_style" placeholder="句尾偶尔带"……"表示停顿思考..."></textarea>
+      </div>
+      <div class="form-group">
+        <label>口癖 (JSON数组)</label>
+        <input name="verbal_tics" value='["……哼","随便你"]'>
+      </div>
+      <div class="form-group">
+        <label>喜欢 (JSON数组)</label>
+        <input name="likes" value='["雨天","安静的音乐","甜食"]'>
+      </div>
+      <div style="grid-column: span 2">
+        <button type="submit" class="btn btn-primary">创建角色</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- Voices Tab -->
+  <section id="tab-voices" class="tab-content">
+    <div class="section-header">
+      <h2>🎤 声音管理</h2>
+      <p>管理内置声音和自定义上传的声音模型</p>
+    </div>
+    <div id="voice-list" class="grid-3"></div>
+
+    <h3 style="margin-top:32px">添加自定义声音</h3>
+    <form id="create-voice-form" class="card grid-2" style="margin-top:16px">
+      <div class="form-group">
+        <label>声音名称 *</label>
+        <input name="name" placeholder="妈妈的声音" required>
+      </div>
+      <div class="form-group">
+        <label>引擎类型 *</label>
+        <select name="engine" required>
+          <option value="gpt_sovits">GPT-SoVITS</option>
+          <option value="cosyvoice">CosyVoice 2</option>
+          <option value="custom">自定义 API 端点</option>
+        </select>
+      </div>
+      <div class="form-group" style="grid-column: span 2">
+        <label>引擎配置 (JSON) *</label>
+        <textarea name="engine_config" placeholder='{"api_url":"https://my-tts.example.com/tts","voice_id":"xxx"}' required></textarea>
+      </div>
+      <div class="form-group">
+        <label>支持的情感 (JSON数组)</label>
+        <input name="emotions" value='["neutral","happy","gentle","sad"]'>
+      </div>
+      <div class="form-group">
+        <label>支持的语言 (JSON数组)</label>
+        <input name="languages" value='["zh-CN"]'>
+      </div>
+      <div style="grid-column: span 2">
+        <button type="submit" class="btn btn-primary">添加声音</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- Upload Tab -->
+  <section id="tab-upload" class="tab-content">
+    <div class="section-header">
+      <h2>📤 上传模型</h2>
+      <p>上传角色精灵图资源包或声音模型文件</p>
+    </div>
+
+    <div class="card" style="margin-bottom:20px">
+      <h3>上传角色精灵图</h3>
+      <p style="color:var(--text2);margin-bottom:12px">PNG 序列帧 ZIP 包，或 Live2D model3.json 模型文件</p>
+      <form id="upload-sprite-form">
+        <div class="form-group">
+          <label>目标角色</label>
+          <select name="character_id" id="upload-char-select"></select>
+        </div>
+        <div class="upload-zone" id="sprite-upload-zone">
+          <p>📁 拖入文件或点击上传</p>
+          <p style="font-size:0.8em;color:var(--text2)">支持 .zip, .bin, model3.json</p>
+          <input type="file" name="file" hidden accept=".zip,.bin,.json">
+        </div>
+        <button type="submit" class="btn btn-primary" style="margin-top:12px">上传</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h3>上传声音模型</h3>
+      <p style="color:var(--text2);margin-bottom:12px">GPT-SoVITS 模型文件 (.pth + config) 或 CosyVoice 样本音频</p>
+      <form id="upload-voice-form">
+        <div class="upload-zone" id="voice-upload-zone">
+          <p>📁 拖入文件或点击上传</p>
+          <p style="font-size:0.8em;color:var(--text2)">支持 .pth, .json, .wav, .mp3</p>
+          <input type="file" name="file" hidden multiple>
+        </div>
+        <button type="submit" class="btn btn-primary" style="margin-top:12px">上传</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- Settings Tab -->
+  <section id="tab-settings" class="tab-content">
+    <div class="section-header">
+      <h2>⚙️ 系统设置</h2>
+      <p>API 配置与系统参数</p>
+    </div>
+    <div class="card">
+      <div id="provider-info" style="color:var(--text2)">加载中...</div>
+    </div>
+  </section>
+
+</main>
+</div>
+
+<!-- ── Toast Container ───────────────────────────────────── -->
+<div id="toast-container"></div>
+
+<!-- ── Script ────────────────────────────────────────────── -->
+<script>
+// ── Navigation ──────────────────────────────
+document.querySelectorAll('.nav-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const tab = btn.dataset.tab;
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    document.getElementById('tab-' + tab).classList.add('active');
+    if (tab === 'dashboard') loadDashboard();
+    if (tab === 'characters') loadCharacters();
+    if (tab === 'voices') loadVoices();
+    if (tab === 'settings') loadSettings();
+    if (tab === 'upload') loadUploadForm();
+  });
+});
+
+// ── API Helpers ─────────────────────────────
+const API = '/api/admin';
+
+async function apiGet(path) {
+  const r = await fetch(API + path);
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+async function apiPost(path, body) {
+  const r = await fetch(API + path, {
+    method: 'POST',
+    headers: body instanceof FormData ? {} : {'Content-Type': 'application/json'},
+    body: body instanceof FormData ? body : JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+async function apiDelete(path) {
+  const r = await fetch(API + path, { method: 'DELETE' });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+function toast(msg, ok = true) {
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.style.background = ok ? 'var(--surface2)' : 'rgba(248,113,113,0.3)';
+  el.textContent = msg;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => el.remove(), 3000);
+}
+
+// ── Dashboard ───────────────────────────────
+async function loadDashboard() {
+  try {
+    const devices = await apiGet('/devices');
+    const container = document.getElementById('device-list');
+    if (!devices.devices.length) {
+      container.innerHTML = '<div class="card" style="text-align:center;padding:40px"><p style="color:var(--text2)">暂无设备连接</p><p style="font-size:0.85em;color:var(--text2)">ESP32 设备将通过 WebSocket 连接</p></div>';
+    } else {
+      container.innerHTML = devices.devices.map(d => `
+        <div class="card">
+          <h4><span class="status-dot status-online"></span>${d.name || d.id}</h4>
+          <p style="color:var(--text2);font-size:0.85em">ID: ${d.id}</p>
+          <p style="color:var(--text2);font-size:0.85em">角色: ${d.current_character_id || '默认'}</p>
+          <p style="color:var(--text2);font-size:0.85em">声音: ${d.current_voice_id || '默认'}</p>
+        </div>`).join('');
+    }
+
+    const health = await fetch('/health').then(r => r.json());
+    document.getElementById('stt-status').textContent = health.stt || '未配置';
+    document.getElementById('llm-status').textContent = health.llm || '未配置';
+    document.getElementById('tts-status').textContent = health.tts || '未配置';
+  } catch (e) {
+    console.error('Dashboard error:', e);
+  }
+}
+
+// ── Characters ──────────────────────────────
+async function loadCharacters() {
+  try {
+    const data = await apiGet('/characters');
+    const container = document.getElementById('character-list');
+    container.innerHTML = data.characters.map(c => `
+      <div class="char-card">
+        <div class="char-preview">${c.preview_url ? `<img src="${c.preview_url}" style="max-width:100%;max-height:100%">` : '🎭'}</div>
+        <div class="char-info">
+          <h4>${c.name}</h4>
+          <p style="color:var(--text2);font-size:0.85em;margin-bottom:4px">称呼: ${c.name_call} | 心情: ${c.default_mood}</p>
+          <div class="tags">${(c.personality_tags || []).map(t => `<span class="tag">${t}</span>`).join('')}</div>
+          <p style="color:var(--text2);font-size:0.8em;margin-top:8px">${c.personality.substring(0, 80)}...</p>
+        </div>
+        <div class="char-actions">
+          <button class="btn btn-primary btn-sm" onclick="previewChar('${c.id}')">预览</button>
+          <button class="btn btn-outline btn-sm" onclick="editChar('${c.id}')">编辑</button>
+          ${!c.id.startsWith('hoshino') && !c.id.startsWith('nanase') && !c.id.startsWith('kujo') ?
+            `<button class="btn btn-danger btn-sm" onclick="deleteChar('${c.id}')">删除</button>` : ''}
+        </div>
+      </div>`).join('');
+  } catch (e) {
+    toast('加载角色失败: ' + e.message, false);
+  }
+}
+
+async function deleteChar(id) {
+  if (!confirm('确认删除这个角色？')) return;
+  try { await apiDelete('/characters/' + id); toast('已删除'); loadCharacters(); }
+  catch(e) { toast('删除失败: ' + e.message, false); }
+}
+
+function previewChar(id) { toast('预览功能即将上线 (Live2D集成)'); }
+function editChar(id) { toast('编辑功能即将上线'); }
+
+// ── Character Create Form ──────────────────
+document.getElementById('create-character-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  try {
+    const result = await apiPost('/characters', fd);
+    toast('角色创建成功: ' + result.name);
+    loadCharacters();
+    e.target.reset();
+  } catch (err) {
+    toast('创建失败: ' + err.message, false);
+  }
+});
+
+// ── Voices ──────────────────────────────────
+async function loadVoices() {
+  try {
+    const data = await apiGet('/voices');
+    const container = document.getElementById('voice-list');
+    container.innerHTML = data.voices.map(v => `
+      <div class="voice-card">
+        <span class="engine-badge">${v.engine}</span>
+        <h4>${v.name}</h4>
+        <p style="color:var(--text2);font-size:0.8em">情感: ${(v.emotions||[]).join(', ')}</p>
+        <p style="color:var(--text2);font-size:0.8em">语言: ${(v.languages||[]).join(', ')}</p>
+        ${v.is_builtin ? '<span class="tag" style="margin-top:8px;display:inline-block">内置</span>' : ''}
+        <div style="margin-top:12px">
+          <button class="btn btn-outline btn-sm" onclick="previewVoice('${v.id}')">试听</button>
+          ${!v.is_builtin ? `<button class="btn btn-danger btn-sm" onclick="deleteVoice('${v.id}')">删除</button>` : ''}
+        </div>
+      </div>`).join('');
+  } catch (e) {
+    toast('加载声音失败: ' + e.message, false);
+  }
+}
+
+async function deleteVoice(id) {
+  if (!confirm('确认删除这个声音？')) return;
+  try { await apiDelete('/voices/' + id); toast('已删除'); loadVoices(); }
+  catch(e) { toast('删除失败: ' + e.message, false); }
+}
+
+function previewVoice(id) { toast('试听功能即将上线'); }
+
+// ── Voice Create Form ──────────────────────
+document.getElementById('create-voice-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  try {
+    const result = await apiPost('/voices', fd);
+    toast('声音添加成功: ' + result.name);
+    loadVoices();
+    e.target.reset();
+  } catch (err) {
+    toast('添加失败: ' + err.message, false);
+  }
+});
+
+// ── Upload ──────────────────────────────────
+async function loadUploadForm() {
+  const data = await apiGet('/characters');
+  const sel = document.getElementById('upload-char-select');
+  sel.innerHTML = data.characters.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+}
+
+// Upload zone handlers
+['sprite-upload-zone', 'voice-upload-zone'].forEach(id => {
+  const zone = document.getElementById(id);
+  if (!zone) return;
+  zone.addEventListener('click', () => zone.querySelector('input[type=file]').click());
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    zone.classList.remove('drag-over');
+    zone.querySelector('input[type=file]').files = e.dataTransfer.files;
+  });
+});
+
+document.getElementById('upload-sprite-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const fileInput = document.getElementById('sprite-upload-zone').querySelector('input');
+  if (!fileInput.files[0]) { toast('请选择文件'); return; }
+  fd.append('file', fileInput.files[0]);
+  try { await apiPost('/upload/sprite', fd); toast('上传成功'); }
+  catch(err) { toast('上传失败: ' + err.message, false); }
+});
+
+// ── Settings ────────────────────────────────
+async function loadSettings() {
+  try {
+    const providers = await apiGet('/providers');
+    document.getElementById('provider-info').innerHTML = `
+      <p><strong>STT 引擎:</strong> ${providers.stt.map(p => p.display_name || p.name).join(', ')}</p>
+      <p><strong>LLM 引擎:</strong> ${providers.llm.map(p => p.display_name || p.name).join(', ')}</p>
+      <p><strong>TTS 引擎:</strong> ${providers.tts.map(p => p.display_name || p.name).join(', ')}</p>
+    `;
+  } catch(e) { /* ignore */ }
+}
+
+// ── Init ────────────────────────────────────
+loadDashboard();
+</script>
+
+</body>
+</html>
