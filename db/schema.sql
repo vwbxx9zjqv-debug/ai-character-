@@ -9,7 +9,6 @@ CREATE TABLE IF NOT EXISTS devices (
     name TEXT NOT NULL DEFAULT 'My Companion',
     current_character_id TEXT,
     current_voice_id TEXT,
-    bt_headphones_enabled INTEGER DEFAULT 0,      -- 0=speaker, 1=BT headphones
     wifi_ssid TEXT,
     firmware_version TEXT,
     last_seen_at TEXT,

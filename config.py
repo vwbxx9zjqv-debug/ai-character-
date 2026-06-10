@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     claude_model: str = "claude-haiku-4-5-20251001"
     llm_temperature: float = 0.8
     llm_max_tokens: int = 256
+    # DeepSeek (used by OpenAICompatibleProvider)
+    deepseek_model: str = "deepseek-chat"
+    deepseek_base_url: str = "https://api.deepseek.com"
 
     # ── TTS Config ──────────────────────────────────────────────
     edge_tts_voice: str = "zh-CN-XiaoxiaoNeural"

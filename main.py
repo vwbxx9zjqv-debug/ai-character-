@@ -66,10 +66,20 @@ async def lifespan(app: FastAPI):
         logger.warning(f"  STT activation skipped: {e}")
 
     try:
-        await registry.activate_llm(
-            settings.default_llm,
-            {"model": settings.claude_model, "temperature": settings.llm_temperature}
-        )
+        # Build LLM config based on provider type
+        if settings.default_llm == "OpenAICompatibleProvider":
+            llm_config = {
+                "model": settings.deepseek_model,
+                "base_url": settings.deepseek_base_url,
+                "temperature": settings.llm_temperature,
+                "api_key": settings.openai_api_key,
+            }
+        else:
+            llm_config = {
+                "model": settings.claude_model,
+                "temperature": settings.llm_temperature,
+            }
+        await registry.activate_llm(settings.default_llm, llm_config)
         logger.info(f"  LLM: {registry.active_llm.display_name}")
     except Exception as e:
         logger.warning(f"  LLM activation skipped: {e}")

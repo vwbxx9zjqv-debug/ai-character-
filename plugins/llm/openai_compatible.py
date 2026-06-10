@@ -26,25 +26,27 @@ class OpenAICompatibleProvider(LLMProvider):
     """
 
     config_schema = {
-        "model": {"type": "string", "default": "gpt-4o-mini"},
-        "base_url": {"type": "string", "default": "https://api.openai.com/v1", "description": "API base URL for Ollama/DeepSeek etc."},
+        "model": {"type": "string", "default": "deepseek-chat"},
+        "base_url": {"type": "string", "default": "https://api.deepseek.com", "description": "API base URL for DeepSeek/Ollama etc."},
         "temperature": {"type": "float", "default": 0.8},
         "max_tokens": {"type": "int", "default": 256},
     }
 
     EMOTION_KEYWORDS = {
-        "happy": ["开心", "太好了", "哈哈"],
-        "gentle": ["温柔", "慢慢来", "没关系"],
-        "sad": ["难过", "伤心", "对不起"],
-        "excited": ["哇", "太棒了", "厉害"],
-        "comforting": ["别担心", "会好的", "加油"],
-        "neutral": [],
+        "happy": ["开心", "太好了", "哈哈", "真好", "棒", "高兴", "嘻嘻", "耶"],
+        "gentle": ["温柔", "慢慢来", "没关系", "没事", "陪", "安心"],
+        "sad": ["难过", "伤心", "对不起", "遗憾", "唉", "可惜"],
+        "excited": ["哇", "太棒了", "厉害", "太强了", "！！！", "天啊"],
+        "comforting": ["别担心", "会好的", "加油", "支持你", "没关系"],
+        "curious": ["为什么", "怎么", "真的吗", "说说", "讲讲", "有意思"],
+        "shy": ["不好意思", "害羞", "脸红", "那个……"],
+        "playful": ["略略", "骗你的", "开玩笑", "逗你"],
     }
 
     def __init__(
         self,
-        model: str = "gpt-4o-mini",
-        base_url: str = "https://api.openai.com/v1",
+        model: str = "deepseek-chat",
+        base_url: str = "https://api.deepseek.com",
         temperature: float = 0.8,
         max_tokens: int = 256,
         api_key: str = "",
@@ -54,6 +56,7 @@ class OpenAICompatibleProvider(LLMProvider):
         self._model = model
         self._temperature = temperature
         self._max_tokens = max_tokens
+        self._base_url = base_url
         self._client = AsyncOpenAI(
             api_key=api_key or settings.openai_api_key or "not-needed",
             base_url=base_url,
@@ -65,6 +68,8 @@ class OpenAICompatibleProvider(LLMProvider):
 
     @property
     def display_name(self) -> str:
+        if "deepseek" in self._base_url:
+            return f"DeepSeek ({self._model})"
         return f"OpenAI Compatible ({self._model})"
 
     async def chat(

@@ -96,7 +96,6 @@ class HeartbeatMessage(WSMessage):
     type: str = MessageType.HEARTBEAT
     state: str = "idle"
     battery: int | None = None        # Battery percentage (if portable)
-    bt_headphones: bool = False       # Bluetooth headphones connected?
     wifi_rssi: int = 0                # WiFi signal strength
     current_pet_id: str = ""
     current_voice_id: str = ""
