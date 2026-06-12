@@ -18,6 +18,9 @@ from config import get_settings
 
 logger = logging.getLogger("llm.openai_compat")
 
+# Regex to strip Chinese parenthetical stage directions: （动作描写）or (action)
+_CHINESE_PARENS_RE = re.compile(r'[（(]\s*[^）)]*[）)]\s*')
+
 
 class OpenAICompatibleProvider(LLMProvider):
     """Generic OpenAI-compatible API provider.
@@ -101,6 +104,10 @@ class OpenAICompatibleProvider(LLMProvider):
 
         # Parse emotion (same format as Claude)
         emotion, text = self._parse_emotion(raw_text)
+
+        # Strip Chinese parenthetical stage directions at source
+        text = _CHINESE_PARENS_RE.sub('', text).strip()
+
         duration_ms = int((time.monotonic() - start) * 1000)
         tokens = response.usage.total_tokens if response.usage else 0
 

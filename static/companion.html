@@ -133,6 +133,7 @@ body {
   transition: background 0.3s, box-shadow 0.3s;
 }
 .state-dot.active { background: #7bc87b; box-shadow: 0 0 8px #7bc87b; }
+.state-dot.continuous { background: #7bc87b; box-shadow: 0 0 8px #7bc87b; animation: pulse 2s infinite; }
 .state-dot.thinking { background: #7b9ec8; box-shadow: 0 0 8px #7b9ec8; animation: pulse 0.6s infinite; }
 .state-dot.speaking { background: #c87b7b; box-shadow: 0 0 8px #c87b7b; animation: pulse 0.3s infinite; }
 
@@ -253,9 +254,20 @@ body {
   animation: micPulse 0.8s infinite;
 }
 
+.mic-btn.continuous {
+  background: #7bc87b;
+  color: white;
+  animation: continuousPulse 2s ease-in-out infinite;
+}
+
 @keyframes micPulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(201, 125, 125, 0.4); }
   50% { box-shadow: 0 0 0 12px rgba(201, 125, 125, 0); }
+}
+
+@keyframes continuousPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(123, 200, 123, 0.5); }
+  50% { box-shadow: 0 0 0 12px rgba(123, 200, 123, 0); }
 }
 
 .text-input-row {
@@ -352,7 +364,7 @@ body {
     <select id="charSelect" onchange="switchCharacter(this.value)">
       <option value="huayang" selected>花阳</option>
     </select>
-    <button class="mic-btn" id="micBtn" onclick="toggleMic()" title="点击说话">🎤</button>
+    <button class="mic-btn" id="micBtn" onclick="toggleVoiceMode()" title="点击开启持续语音对话">🎤</button>
   </div>
 
   <!-- Text input fallback -->
@@ -365,64 +377,185 @@ body {
 <script>
 // ── State ────────────────────────────────────────────────
 const DEVICE_ID = 'browser';
-let isRecording = false;
+let voiceMode = false;       // Continuous voice mode: on = keep listening
+let isRecording = false;     // Currently capturing speech
 let recognition = null;
 let currentEmotion = 'neutral';
 let audioContext = null;
+let silenceTimer = null;
+let busyTurn = false;        // True while processing a turn (prevent double-fire)
+const SILENCE_TIMEOUT = 10000;     // Auto-stop after 10s of silence
+const SPEECH_PAUSE_MS = 1800;     // Wait after speech ends before finalizing
 
 // ── Init ─────────────────────────────────────────────────
 async function init() {
   await loadCharacters();
 
-  // Check Web Speech API support
-  if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    recognition = new SR();
-    recognition.lang = 'zh-CN';
-    recognition.interimResults = false;
-    recognition.continuous = false;
-    recognition.maxAlternatives = 1;
-
-    recognition.onresult = async (e) => {
-      const text = e.results[0][0].transcript.trim();
-      if (text) {
-        addMessage('user', text);
-        await sendToBackend(text);
-      }
-      stopRecording();
-    };
-
-    recognition.onerror = (e) => {
-      console.error('Speech error:', e.error);
-      stopRecording();
-      if (e.error === 'not-allowed') {
-        alert('请允许麦克风权限后重试');
-      }
-    };
-
-    recognition.onend = () => {
-      if (isRecording) {
-        // Restart if still recording (for continuous effect)
-        try { recognition.start(); } catch(e) {}
-      }
-    };
-  } else {
-    document.getElementById('micBtn').style.display = 'none';
-    document.getElementById('textInput').style.display = 'block';
-    console.warn('Web Speech API not supported, using text input only');
-  }
-
-  // Init AudioContext for playback
+  // Init AudioContext for playback (must be done early for Safari)
   try {
     audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
   } catch(e) {
     console.warn('AudioContext not available');
   }
+
+  // Check Web Speech API support
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (SR) {
+    recognition = new SR();
+    recognition.lang = 'zh-CN';
+    recognition.interimResults = true;
+    recognition.continuous = false;
+    recognition.maxAlternatives = 1;
+
+    recognition.onresult = (e) => {
+      clearTimeout(silenceTimer);
+      // Show interim result as live preview
+      const last = e.results[e.results.length - 1];
+      const text = last[0].transcript.trim();
+      if (text && !last.isFinal) {
+        setState('listening', `听到: ${text.slice(-20)}`);
+      }
+      if (text && last.isFinal) {
+        addMessage('user', text);
+        stopRecording(); // stop current recognition session
+        processTurn(text); // send to backend, play audio, then resume if in voiceMode
+      }
+    };
+
+    recognition.onspeechend = () => {
+      // User stopped speaking — wait briefly then force-finalize
+      clearTimeout(silenceTimer);
+      silenceTimer = setTimeout(() => {
+        if (isRecording) {
+          // No final result arrived in time, stop gracefully
+          stopRecording();
+          setState(voiceMode ? 'idle' : 'idle', voiceMode ? '语音模式 · 聆听中' : '待机中');
+          if (voiceMode) resumeListening();
+        }
+      }, SPEECH_PAUSE_MS);
+    };
+
+    recognition.onspeechstart = () => {
+      clearTimeout(silenceTimer);
+      setState('listening', '正在听……');
+    };
+
+    recognition.onerror = (e) => {
+      console.error('Speech error:', e.error);
+      clearTimeout(silenceTimer);
+      stopRecording();
+
+      const messages = {
+        'not-allowed': '请允许麦克风权限（地址栏左侧 → 网站设置 → 麦克风 → 允许）',
+        'no-speech': '',  // silent retry in voice mode
+        'audio-capture': '无法访问麦克风，请检查设备连接',
+        'network': '语音识别需要网络连接，请检查网络',
+        'aborted': '',
+      };
+      const msg = messages[e.error] || '';
+      if (msg) {
+        addMessage('assistant', '🔇 ' + msg);
+      }
+
+      // In voice mode, retry after short delay (except for perm errors)
+      if (voiceMode && e.error !== 'not-allowed' && e.error !== 'audio-capture') {
+        setTimeout(() => {
+          if (voiceMode && !busyTurn) resumeListening();
+        }, 1500);
+      } else if (e.error === 'not-allowed' || e.error === 'audio-capture') {
+        // Permanent error — turn off voice mode
+        voiceMode = false;
+        updateMicButton();
+        setState('idle', '待机中');
+      }
+    };
+
+    recognition.onend = () => {
+      // Only resume if voiceMode is ON and we're between turns
+      if (voiceMode && !isRecording && !busyTurn && !silenceTimer) {
+        setTimeout(() => {
+          if (voiceMode && !busyTurn) resumeListening();
+        }, 800);
+      }
+    };
+  } else {
+    document.getElementById('micBtn').style.display = 'none';
+    document.getElementById('textInput').placeholder = '输入消息后按发送……';
+    console.warn('Web Speech API not supported, using text input only');
+  }
+}
+
+// ── Voice Mode ───────────────────────────────────────────
+function toggleVoiceMode() {
+  if (!recognition) {
+    addMessage('assistant', '🔇 你的浏览器不支持语音识别。请使用 Chrome 或 Edge 浏览器，然后用文字输入。');
+    return;
+  }
+
+  voiceMode = !voiceMode;
+
+  if (voiceMode) {
+    // Turn ON continuous mode
+    updateMicButton();
+    addMessage('assistant', '🎙️ 语音模式已开启，我会一直听着。再说一次点击麦克风即可关闭。');
+    setState('idle', '语音模式 · 聆听中');
+    resumeListening();
+  } else {
+    // Turn OFF continuous mode
+    stopRecording();
+    busyTurn = false;
+    clearTimeout(silenceTimer);
+    updateMicButton();
+    setState('idle', '待机中');
+    addMessage('assistant', '语音模式已关闭，随时可以打字聊天。');
+  }
+}
+
+function resumeListening() {
+  if (!voiceMode || busyTurn || isRecording) return;
+  if (!recognition) return;
+
+  isRecording = true;
+  setState('idle', '语音模式 · 聆听中');
+  try {
+    recognition.start();
+    clearTimeout(silenceTimer);
+    silenceTimer = setTimeout(() => {
+      if (isRecording) {
+        stopRecording();
+        setState('idle', '语音模式 · 聆听中');
+        // In voice mode, just keep trying
+        if (voiceMode) setTimeout(() => resumeListening(), 1000);
+      }
+    }, SILENCE_TIMEOUT);
+  } catch(e) {
+    isRecording = false;
+    // Recognition might already be started — retry later
+    if (voiceMode) setTimeout(() => resumeListening(), 500);
+  }
+}
+
+function stopRecording() {
+  isRecording = false;
+  clearTimeout(silenceTimer);
+  try { recognition.stop(); } catch(e) {}
+}
+
+function updateMicButton() {
+  const btn = document.getElementById('micBtn');
+  btn.classList.remove('recording', 'continuous');
+  if (voiceMode) {
+    btn.textContent = '🎙️';
+    btn.classList.add('continuous');
+    btn.title = '点击关闭持续语音';
+  } else {
+    btn.textContent = '🎤';
+    btn.title = '点击开启持续语音对话';
+  }
 }
 
 // ── Character Management ────────────────────────────────
 async function loadCharacters() {
-  // Only 花阳 available
   const sel = document.getElementById('charSelect');
   sel.innerHTML = '<option value="huayang">花阳</option>';
 }
@@ -444,40 +577,6 @@ async function switchCharacter(id) {
   }
 }
 
-// ── Mic Control ─────────────────────────────────────────
-function toggleMic() {
-  if (isRecording) {
-    stopRecording();
-  } else {
-    startRecording();
-  }
-}
-
-function startRecording() {
-  if (!recognition) {
-    alert('你的浏览器不支持语音识别，请使用文字输入');
-    return;
-  }
-  isRecording = true;
-  const btn = document.getElementById('micBtn');
-  btn.textContent = '🔴';
-  btn.classList.add('recording');
-  setState('listening', '正在听……');
-  try {
-    recognition.start();
-  } catch(e) {
-    // Already started
-  }
-}
-
-function stopRecording() {
-  isRecording = false;
-  const btn = document.getElementById('micBtn');
-  btn.textContent = '🎤';
-  btn.classList.remove('recording');
-  try { recognition.stop(); } catch(e) {}
-}
-
 // ── Text Input ──────────────────────────────────────────
 async function sendText() {
   const input = document.getElementById('textInput');
@@ -485,11 +584,12 @@ async function sendText() {
   if (!text) return;
   input.value = '';
   addMessage('user', text);
-  await sendToBackend(text);
+  await processTurn(text);
 }
 
-// ── Backend Communication ───────────────────────────────
-async function sendToBackend(text) {
+// ── Turn Processing (shared by voice + text) ────────────
+async function processTurn(text) {
+  busyTurn = true;
   const loading = document.getElementById('loading');
   loading.style.display = 'flex';
   setState('thinking', '思考中……');
@@ -507,46 +607,47 @@ async function sendToBackend(text) {
     const data = await r.json();
     loading.style.display = 'none';
 
-    // Display response
     currentEmotion = data.emotion;
     addMessage('assistant', data.assistant_text, data.emotion);
 
-    // Play audio
+    // Play TTS audio
     if (data.audio_base64) {
       setState('speaking', '说话中……');
       await playAudio(data.audio_base64);
     }
 
-    setState('idle', '待机中');
-
   } catch(e) {
     loading.style.display = 'none';
-    setState('idle', '出错啦');
     console.error('Chat error:', e);
     addMessage('assistant', '……抱歉，好像出了点问题。能再说一次吗？');
+  }
+
+  busyTurn = false;
+
+  // If voice mode is still ON, resume listening
+  if (voiceMode && !isRecording) {
+    setState('idle', '语音模式 · 聆听中');
+    setTimeout(() => resumeListening(), 600);
+  } else if (!voiceMode) {
+    setState('idle', '待机中');
   }
 }
 
 // ── Audio Playback ──────────────────────────────────────
 async function playAudio(base64) {
   if (!audioContext) return;
-
   try {
-    // Decode base64 → ArrayBuffer
     const binary = atob(base64);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
 
-    // Decode WAV
     const audioBuffer = await audioContext.decodeAudioData(bytes.buffer);
     const source = audioContext.createBufferSource();
     source.buffer = audioBuffer;
     source.connect(audioContext.destination);
     source.start();
 
-    return new Promise(resolve => {
-      source.onended = resolve;
-    });
+    return new Promise(resolve => { source.onended = resolve; });
   } catch(e) {
     console.error('Audio playback error:', e);
   }
@@ -582,6 +683,7 @@ function setState(state, text) {
   if (state === 'thinking') dot.className = 'state-dot thinking';
   else if (state === 'speaking') dot.className = 'state-dot speaking';
   else if (state === 'listening') dot.className = 'state-dot active';
+  else if (voiceMode && state === 'idle') dot.className = 'state-dot continuous';
 }
 
 function escapeHtml(s) {

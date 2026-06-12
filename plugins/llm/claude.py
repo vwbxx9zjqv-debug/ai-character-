@@ -18,6 +18,9 @@ from config import get_settings
 
 logger = logging.getLogger("llm.claude")
 
+# Regex to strip Chinese parenthetical stage directions: （动作描写）or (action)
+_CHINESE_PARENS_RE = re.compile(r'[（(]\s*[^）)]*[）)]\s*')
+
 
 class ClaudeProvider(LLMProvider):
     """LLM provider using Anthropic Claude API.
@@ -107,6 +110,9 @@ class ClaudeProvider(LLMProvider):
 
         # Parse emotion from response
         emotion, text = self._parse_emotion(raw_text)
+
+        # Strip Chinese parenthetical stage directions at source
+        text = _CHINESE_PARENS_RE.sub('', text).strip()
 
         duration_ms = int((time.monotonic() - start) * 1000)
         tokens = response.usage.input_tokens + response.usage.output_tokens if response.usage else 0

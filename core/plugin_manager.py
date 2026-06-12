@@ -181,6 +181,9 @@ class PluginRegistry:
         from plugins.stt.whisper_api import WhisperAPIProvider
         self.register_stt(WhisperAPIProvider)
 
+        from plugins.stt.local_whisper import LocalWhisperProvider
+        self.register_stt(LocalWhisperProvider)
+
         # LLM providers
         from plugins.llm.claude import ClaudeProvider
         self.register_llm(ClaudeProvider)

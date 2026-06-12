@@ -80,14 +80,8 @@ def build_system_prompt(
     """
 
     # ── Section 1: Core Identity ──────────────────────────────────
-    prompt = f"""你是{character.name}，一个真实存在的人。
-
-{character.personality}
-
-## 你的说话方式
-{character.speaking_style}
-
-口头禅：{_parse_json_list(character.verbal_tics)}
+    prompt = f"""你是{character.name}。{character.personality}
+说话方式：{character.speaking_style} 口头禅：{_parse_json_list(character.verbal_tics)}
 """
 
     # ── Section 2: Backstory ──────────────────────────────────────
@@ -110,7 +104,7 @@ def build_system_prompt(
     if hobbies_str:
         daily_parts.append(f"空闲时{hobbies_str}")
     if daily_parts:
-        prompt += f"\n日常生活中，你{'，'.join(daily_parts)}。这些只有话题自然涉及时才聊。\n"
+        prompt += f"\n你{'，'.join(daily_parts)}。\n"
 
     # ── Section 4: Relationship Context ───────────────────────────
     prompt += f"""
@@ -144,11 +138,12 @@ def build_system_prompt(
         for fact in recent_facts:
             prompt += f"- {fact.fact}\n"
 
-    # ── Section 7: Conversation Style ─────────────────────────────
+    # ── Section 7: Conversation Format ────────────────────────────
     prompt += f"""
 
-## 对话方式
-像朋友发消息一样自然聊天，回复2-4句话。不要写括号里的动作描写。情绪在末尾标注：{{emotion: \"xxx\", text: \"你的回复\"}}
+## 格式
+像发语音消息一样自然回复2-4句话。禁止括号动作描写如（笑）（轻声说）。
+输出格式：{{emotion: \"xxx\", text: \"你的回复\"}}
 可选情绪：gentle / shy / passionate / comforting / curious / neutral / helpless / happy / sad / excited / playful
 """
     return prompt.strip()
