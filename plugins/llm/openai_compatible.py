@@ -112,12 +112,25 @@ class OpenAICompatibleProvider(LLMProvider):
         )
 
     def _parse_emotion(self, raw: str) -> tuple[str, str]:
-        # Structured format
-        pattern = r'\{emotion:\s*"(\w+)"\s*,\s*text:\s*"(.+?)"\s*\}'
-        match = re.search(pattern, raw, re.DOTALL)
+        # Format 1: {emotion: "xxx", text: "..."} — full structured
+        pattern1 = r'\{emotion:\s*"(\w+)"\s*,\s*text:\s*"(.+?)"\s*\}'
+        match = re.search(pattern1, raw, re.DOTALL)
         if match:
             return match.group(1), match.group(2).strip()
-        # JSON format
+
+        # Format 2: {emotion: "xxx"} text — emotion tag prefix then plain text
+        pattern2 = r'\{emotion:\s*"(\w+)"\}\s*(.+)'
+        match = re.search(pattern2, raw, re.DOTALL)
+        if match:
+            return match.group(1), match.group(2).strip()
+
+        # Format 3: {emotion: xxx} text — without quotes
+        pattern3 = r'\{emotion:\s*(\w+)\}\s*(.+)'
+        match = re.search(pattern3, raw, re.DOTALL)
+        if match:
+            return match.group(1), match.group(2).strip()
+
+        # Format 4: JSON {"emotion": "xxx", "text": "xxx"}
         try:
             if raw.startswith("{"):
                 data = json.loads(raw)
@@ -125,7 +138,8 @@ class OpenAICompatibleProvider(LLMProvider):
                     return data["emotion"], data["text"].strip()
         except json.JSONDecodeError:
             pass
-        # Fallback
+
+        # Fallback: keyword detection from text
         for emotion, keywords in self.EMOTION_KEYWORDS.items():
             if any(kw in raw for kw in keywords):
                 return emotion, raw

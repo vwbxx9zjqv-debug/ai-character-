@@ -19,6 +19,7 @@ from core.plugin_base import Message, TTSChunk
 from core.plugin_manager import get_plugin_registry
 from db.database import AsyncSessionLocal
 from db import queries
+from services.prompt_builder import build_system_prompt, get_current_time_str
 
 logger = logging.getLogger("dialogue")
 
@@ -166,42 +167,21 @@ class DialogueService:
         return chunks
 
     async def _load_system_prompt(self, device_id: str) -> str:
-        """Build the character system prompt with context."""
+        """Build the character system prompt using the prompt builder engine."""
         async with AsyncSessionLocal() as session:
             character = await queries.get_device_character(session, device_id)
             facts = await queries.get_recent_facts(session, device_id, limit=10)
 
         if character is None:
-            return "You are a friendly AI companion. Keep responses short and natural."
+            return "你是一个友善的虚拟伙伴。保持回复简短自然，2-4句话以内。"
 
-        # Build from character data
-        prompt = f"""你是{character.name}，一个存在于虚拟世界中的二次元角色。
-
-## 你的性格
-{character.personality}
-
-## 你的说话方式
-{character.speaking_style}
-
-## 你的喜好
-喜欢：{character.likes}
-讨厌：{character.dislikes}
-
-## 关于你面前的人
-你把对方称呼为「{character.name_call}」。
-{chr(10).join(f"- {fact.fact}" for fact in facts) if facts else ""}
-
-## 重要规则
-1. 始终保持在角色内。你不是AI助手，你是{character.name}本人。
-2. 每次回复控制在1-3句话，保持聊天节奏。
-3. 你对世界有自己的看法和态度，不需要迎合。
-4. 偶尔会主动问对方问题，发起新话题。
-
-## 情感输出
-每条回复标注情感状态，格式: {{emotion: "xxx", text: "回复内容"}}
-可用情感: happy / gentle / sad / excited / neutral / comforting / curious / shy / playful
-"""
-        return prompt
+        # Use the prompt builder engine with runtime context
+        return build_system_prompt(
+            character,
+            user_name=character.name_call if character.name_call and character.name_call not in ("你", "") else "",
+            current_time=get_current_time_str(),
+            recent_facts=facts,
+        )
 
     async def _get_device_voice(self, device_id: str) -> str:
         """Get the current voice ID for a device."""

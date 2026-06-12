@@ -26,7 +26,7 @@ from config import get_settings
 from db.database import init_db, close_db
 from core.plugin_manager import get_plugin_registry
 from core.event_bus import get_event_bus
-from routes import ws_chat, admin
+from routes import ws_chat, admin, browser
 
 # ── Logging ───────────────────────────────────────────────────────
 
@@ -131,6 +131,7 @@ app.add_middleware(
 
 app.include_router(ws_chat.router)
 app.include_router(admin.router)
+app.include_router(browser.router)
 
 # Static files (admin panel + uploads)
 static_dir = Path(__file__).parent / "static"
@@ -142,6 +143,14 @@ app.mount("/uploads", StaticFiles(directory=str(uploads_dir)), name="uploads")
 
 
 # ── Health Check ──────────────────────────────────────────────────
+
+@app.get("/chat")
+async def chat_page():
+    """Serve the browser companion page."""
+    from fastapi.responses import HTMLResponse
+    chat_html = Path(__file__).parent / "static" / "companion.html"
+    return HTMLResponse(chat_html.read_text(encoding="utf-8"))
+
 
 @app.get("/")
 async def root():

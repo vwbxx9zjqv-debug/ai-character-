@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Virtual Companion — 花阳</title>
+<style>
+/* ── Reset & Base ─────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #f5f0eb;
+  --card: #fffaf5;
+  --text: #4a3f38;
+  --text-light: #8b7e74;
+  --accent: #c4a882;
+  --accent-soft: #e8d5c0;
+  --danger: #c97d7d;
+  --shadow: 0 2px 16px rgba(74, 63, 56, 0.06);
+  --radius: 16px;
+}
+
+body {
+  font-family: -apple-system, "Noto Sans SC", "PingFang SC", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 16px;
+}
+
+/* ── Main Container ──────────────────────────────── */
+.app {
+  width: 100%;
+  max-width: 420px;
+  height: min(90vh, 800px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ── Character Display ───────────────────────────── */
+.character-panel {
+  background: var(--card);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 24px;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+  transition: background 0.5s;
+}
+
+.character-avatar {
+  width: 120px;
+  height: 120px;
+  margin: 0 auto 12px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #e8d5c0 0%, #d4bc9a 50%, #c4a882 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  transition: transform 0.5s ease;
+}
+
+/* Face */
+.avatar-face {
+  font-size: 56px;
+  line-height: 1;
+  user-select: none;
+  transition: transform 0.3s;
+}
+
+/* State-based animations */
+.state-idle .character-avatar {
+  animation: breathe 4s ease-in-out infinite;
+}
+.state-listening .character-avatar {
+  animation: listen 0.6s ease-in-out infinite;
+  background: linear-gradient(135deg, #d5e8d0 0%, #a8d4a0 50%, #7bc87b 100%);
+}
+.state-thinking .character-avatar {
+  animation: think 0.8s ease-in-out infinite;
+  background: linear-gradient(135deg, #d5dce8 0%, #a0b4d4 50%, #7b9ec8 100%);
+}
+.state-speaking .character-avatar {
+  animation: speak 0.3s ease-in-out infinite;
+  background: linear-gradient(135deg, #e8d5d0 0%, #d4a0a0 50%, #c87b7b 100%);
+}
+
+@keyframes breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.04); }
+}
+@keyframes listen {
+  0%, 100% { transform: scale(1) rotate(0deg); }
+  25% { transform: scale(1.03) rotate(-2deg); }
+  75% { transform: scale(1.03) rotate(2deg); }
+}
+@keyframes think {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.02) translateY(-4px); }
+}
+@keyframes speak {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+
+/* Character info */
+.character-name {
+  font-size: 22px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.character-state {
+  font-size: 13px;
+  color: var(--text-light);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.state-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #a0c9a0;
+  transition: background 0.3s, box-shadow 0.3s;
+}
+.state-dot.active { background: #7bc87b; box-shadow: 0 0 8px #7bc87b; }
+.state-dot.thinking { background: #7b9ec8; box-shadow: 0 0 8px #7b9ec8; animation: pulse 0.6s infinite; }
+.state-dot.speaking { background: #c87b7b; box-shadow: 0 0 8px #c87b7b; animation: pulse 0.3s infinite; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* ── Conversation ────────────────────────────────── */
+.conversation {
+  flex: 1;
+  overflow-y: auto;
+  background: var(--card);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.conversation:empty::after {
+  content: "按下麦克风按钮开始对话";
+  display: block;
+  text-align: center;
+  color: var(--text-light);
+  font-size: 14px;
+  padding: 32px 0;
+}
+
+/* Message bubbles */
+.message {
+  max-width: 85%;
+  padding: 10px 14px;
+  border-radius: 14px;
+  font-size: 14px;
+  line-height: 1.6;
+  animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.message.user {
+  align-self: flex-end;
+  background: #e8d5c0;
+  color: var(--text);
+  border-bottom-right-radius: 4px;
+}
+
+.message.assistant {
+  align-self: flex-start;
+  background: #f5f0eb;
+  color: var(--text);
+  border-bottom-left-radius: 4px;
+}
+
+.message .sender {
+  font-size: 11px;
+  color: var(--text-light);
+  margin-bottom: 4px;
+  font-weight: 500;
+}
+
+.message .emotion-tag {
+  display: inline-block;
+  font-size: 10px;
+  background: var(--accent-soft);
+  color: var(--text-light);
+  padding: 1px 6px;
+  border-radius: 8px;
+  margin-left: 6px;
+}
+
+/* ── Controls ────────────────────────────────────── */
+.controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.controls select {
+  flex: 1;
+  padding: 12px;
+  border: 1px solid var(--accent-soft);
+  border-radius: 12px;
+  background: var(--card);
+  font-size: 14px;
+  color: var(--text);
+  cursor: pointer;
+  outline: none;
+}
+
+.mic-btn {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 24px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.mic-btn:hover { background: var(--accent); color: white; transform: scale(1.05); }
+.mic-btn:active { transform: scale(0.95); }
+
+.mic-btn.recording {
+  background: var(--danger);
+  color: white;
+  animation: micPulse 0.8s infinite;
+}
+
+@keyframes micPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(201, 125, 125, 0.4); }
+  50% { box-shadow: 0 0 0 12px rgba(201, 125, 125, 0); }
+}
+
+.text-input-row {
+  display: flex;
+  gap: 8px;
+}
+
+.text-input-row input {
+  flex: 1;
+  padding: 12px;
+  border: 1px solid var(--accent-soft);
+  border-radius: 12px;
+  background: var(--card);
+  font-size: 14px;
+  color: var(--text);
+  outline: none;
+}
+
+.text-input-row input:focus {
+  border-color: var(--accent);
+}
+
+.text-input-row button {
+  padding: 12px 16px;
+  border: none;
+  background: var(--accent);
+  color: white;
+  border-radius: 12px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+/* ── Loading indicator ───────────────────────────── */
+.loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  color: var(--text-light);
+  font-size: 13px;
+}
+
+.loading .dots span {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: dotBounce 1.2s infinite;
+}
+.loading .dots span:nth-child(2) { animation-delay: 0.2s; }
+.loading .dots span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes dotBounce {
+  0%, 80%, 100% { transform: scale(0); }
+  40% { transform: scale(1); }
+}
+
+/* ── Responsive ──────────────────────────────────── */
+@media (max-width: 440px) {
+  .app { max-width: 100%; height: 100vh; }
+  .character-panel { padding: 16px; }
+  .character-avatar { width: 100px; height: 100px; }
+  .avatar-face { font-size: 44px; }
+}
+</style>
+</head>
+<body>
+
+<div class="app" id="app">
+  <!-- Character Display -->
+  <div class="character-panel state-idle" id="characterPanel">
+    <div class="character-avatar">
+      <span class="avatar-face">🌸</span>
+    </div>
+    <div class="character-name" id="charName">花阳</div>
+    <div class="character-state">
+      <span class="state-dot" id="stateDot"></span>
+      <span id="stateText">待机中</span>
+    </div>
+  </div>
+
+  <!-- Conversation -->
+  <div class="conversation" id="conversation"></div>
+
+  <!-- Loading -->
+  <div class="loading" id="loading" style="display:none">
+    <span>花阳思考中</span>
+    <span class="dots"><span></span><span></span><span></span></span>
+  </div>
+
+  <!-- Controls -->
+  <div class="controls">
+    <select id="charSelect" onchange="switchCharacter(this.value)">
+      <option value="huayang" selected>花阳</option>
+    </select>
+    <button class="mic-btn" id="micBtn" onclick="toggleMic()" title="点击说话">🎤</button>
+  </div>
+
+  <!-- Text input fallback -->
+  <div class="text-input-row">
+    <input type="text" id="textInput" placeholder="或者打字输入……" onkeypress="if(event.key==='Enter')sendText()">
+    <button onclick="sendText()">发送</button>
+  </div>
+</div>
+
+<script>
+// ── State ────────────────────────────────────────────────
+const DEVICE_ID = 'browser';
+let isRecording = false;
+let recognition = null;
+let currentEmotion = 'neutral';
+let audioContext = null;
+
+// ── Init ─────────────────────────────────────────────────
+async function init() {
+  await loadCharacters();
+
+  // Check Web Speech API support
+  if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    recognition = new SR();
+    recognition.lang = 'zh-CN';
+    recognition.interimResults = false;
+    recognition.continuous = false;
+    recognition.maxAlternatives = 1;
+
+    recognition.onresult = async (e) => {
+      const text = e.results[0][0].transcript.trim();
+      if (text) {
+        addMessage('user', text);
+        await sendToBackend(text);
+      }
+      stopRecording();
+    };
+
+    recognition.onerror = (e) => {
+      console.error('Speech error:', e.error);
+      stopRecording();
+      if (e.error === 'not-allowed') {
+        alert('请允许麦克风权限后重试');
+      }
+    };
+
+    recognition.onend = () => {
+      if (isRecording) {
+        // Restart if still recording (for continuous effect)
+        try { recognition.start(); } catch(e) {}
+      }
+    };
+  } else {
+    document.getElementById('micBtn').style.display = 'none';
+    document.getElementById('textInput').style.display = 'block';
+    console.warn('Web Speech API not supported, using text input only');
+  }
+
+  // Init AudioContext for playback
+  try {
+    audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+  } catch(e) {
+    console.warn('AudioContext not available');
+  }
+}
+
+// ── Character Management ────────────────────────────────
+async function loadCharacters() {
+  // Only 花阳 available
+  const sel = document.getElementById('charSelect');
+  sel.innerHTML = '<option value="huayang">花阳</option>';
+}
+
+async function switchCharacter(id) {
+  try {
+    const r = await fetch('/api/browser/switch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device_id: DEVICE_ID, character_id: id })
+    });
+    const data = await r.json();
+    if (data.ok) {
+      document.getElementById('charName').textContent = data.character.name;
+      document.getElementById('conversation').innerHTML = '';
+    }
+  } catch(e) {
+    console.error('Switch failed:', e);
+  }
+}
+
+// ── Mic Control ─────────────────────────────────────────
+function toggleMic() {
+  if (isRecording) {
+    stopRecording();
+  } else {
+    startRecording();
+  }
+}
+
+function startRecording() {
+  if (!recognition) {
+    alert('你的浏览器不支持语音识别，请使用文字输入');
+    return;
+  }
+  isRecording = true;
+  const btn = document.getElementById('micBtn');
+  btn.textContent = '🔴';
+  btn.classList.add('recording');
+  setState('listening', '正在听……');
+  try {
+    recognition.start();
+  } catch(e) {
+    // Already started
+  }
+}
+
+function stopRecording() {
+  isRecording = false;
+  const btn = document.getElementById('micBtn');
+  btn.textContent = '🎤';
+  btn.classList.remove('recording');
+  try { recognition.stop(); } catch(e) {}
+}
+
+// ── Text Input ──────────────────────────────────────────
+async function sendText() {
+  const input = document.getElementById('textInput');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  addMessage('user', text);
+  await sendToBackend(text);
+}
+
+// ── Backend Communication ───────────────────────────────
+async function sendToBackend(text) {
+  const loading = document.getElementById('loading');
+  loading.style.display = 'flex';
+  setState('thinking', '思考中……');
+  document.getElementById('conversation').scrollTop = document.getElementById('conversation').scrollHeight;
+
+  try {
+    const r = await fetch('/api/browser/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, device_id: DEVICE_ID })
+    });
+
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+
+    const data = await r.json();
+    loading.style.display = 'none';
+
+    // Display response
+    currentEmotion = data.emotion;
+    addMessage('assistant', data.assistant_text, data.emotion);
+
+    // Play audio
+    if (data.audio_base64) {
+      setState('speaking', '说话中……');
+      await playAudio(data.audio_base64);
+    }
+
+    setState('idle', '待机中');
+
+  } catch(e) {
+    loading.style.display = 'none';
+    setState('idle', '出错啦');
+    console.error('Chat error:', e);
+    addMessage('assistant', '……抱歉，好像出了点问题。能再说一次吗？');
+  }
+}
+
+// ── Audio Playback ──────────────────────────────────────
+async function playAudio(base64) {
+  if (!audioContext) return;
+
+  try {
+    // Decode base64 → ArrayBuffer
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+    // Decode WAV
+    const audioBuffer = await audioContext.decodeAudioData(bytes.buffer);
+    const source = audioContext.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(audioContext.destination);
+    source.start();
+
+    return new Promise(resolve => {
+      source.onended = resolve;
+    });
+  } catch(e) {
+    console.error('Audio playback error:', e);
+  }
+}
+
+// ── UI Helpers ──────────────────────────────────────────
+function addMessage(role, text, emotion) {
+  const convo = document.getElementById('conversation');
+  const div = document.createElement('div');
+  div.className = `message ${role}`;
+
+  const senderName = role === 'user' ? '你' : document.getElementById('charName').textContent;
+  let html = `<div class="sender">${senderName}`;
+  if (emotion) {
+    const labels = { gentle:'温柔', shy:'害羞', passionate:'热情', comforting:'安慰',
+      curious:'好奇', neutral:'平静', helpless:'困扰', happy:'开心', sad:'难过',
+      excited:'兴奋', playful:'调皮' };
+    html += `<span class="emotion-tag">${labels[emotion] || emotion}</span>`;
+  }
+  html += `</div><div>${escapeHtml(text)}</div>`;
+  div.innerHTML = html;
+  convo.appendChild(div);
+  convo.scrollTop = convo.scrollHeight;
+}
+
+function setState(state, text) {
+  const panel = document.getElementById('characterPanel');
+  panel.className = `character-panel state-${state}`;
+  document.getElementById('stateText').textContent = text;
+
+  const dot = document.getElementById('stateDot');
+  dot.className = 'state-dot';
+  if (state === 'thinking') dot.className = 'state-dot thinking';
+  else if (state === 'speaking') dot.className = 'state-dot speaking';
+  else if (state === 'listening') dot.className = 'state-dot active';
+}
+
+function escapeHtml(s) {
+  const div = document.createElement('div');
+  div.textContent = s;
+  return div.innerHTML;
+}
+
+// ── Start ───────────────────────────────────────────────
+init();
+</script>
+</body>
+</html>

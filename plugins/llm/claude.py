@@ -122,14 +122,26 @@ class ClaudeProvider(LLMProvider):
         )
 
     def _parse_emotion(self, raw: str) -> tuple[str, str]:
-        """Parse {emotion: "xxx", text: "xxx"} format, or fallback to keyword detection."""
-        # Try structured format
-        pattern = r'\{emotion:\s*"(\w+)"\s*,\s*text:\s*"(.+?)"\s*\}'
-        match = re.search(pattern, raw, re.DOTALL)
+        """Parse emotion-tagged responses. Supports multiple formats."""
+        # Format 1: {emotion: "xxx", text: "..."}
+        pattern1 = r'\{emotion:\s*"(\w+)"\s*,\s*text:\s*"(.+?)"\s*\}'
+        match = re.search(pattern1, raw, re.DOTALL)
         if match:
             return match.group(1), match.group(2).strip()
 
-        # Try JSON format {"emotion": "xxx", "text": "xxx"}
+        # Format 2: {emotion: "xxx"} text
+        pattern2 = r'\{emotion:\s*"(\w+)"\}\s*(.+)'
+        match = re.search(pattern2, raw, re.DOTALL)
+        if match:
+            return match.group(1), match.group(2).strip()
+
+        # Format 3: {emotion: xxx} text (no quotes)
+        pattern3 = r'\{emotion:\s*(\w+)\}\s*(.+)'
+        match = re.search(pattern3, raw, re.DOTALL)
+        if match:
+            return match.group(1), match.group(2).strip()
+
+        # Format 4: JSON {"emotion": "xxx", "text": "xxx"}
         try:
             if raw.startswith("{"):
                 data = json.loads(raw)
@@ -138,7 +150,7 @@ class ClaudeProvider(LLMProvider):
         except json.JSONDecodeError:
             pass
 
-        # Fallback: detect emotion from keywords in text
+        # Fallback: keyword detection
         detected = self._detect_emotion(raw)
         return detected, raw
 
