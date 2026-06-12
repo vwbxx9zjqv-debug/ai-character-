@@ -20,10 +20,12 @@ from core.ws_protocol import (
     SpeechMessage, StateMessage, CharacterSyncMessage,
     SwitchModelMessage, ErrorMessage,
     encode_audio_frame, parse_message,
-    SpeechSegmentMessage, HeartbeatMessage,
+    SpeechSegmentMessage, HeartbeatMessage, InitiativeMessage,
 )
+from core.event_bus import get_event_bus, CharacterInitiative
 from core.plugin_base import Message
 from services.dialogue_service import get_dialogue_service
+from services.prompt_builder import strip_emotion_tags
 from db.database import AsyncSessionLocal
 from db import queries
 
@@ -264,3 +266,94 @@ async def _send_character_sync(ws: WebSocket, device_id: str) -> None:
             sprites_url=character.sprite_pack_url,
             voice_id=voice_id or character.default_voice_id,
         ).to_json())
+
+
+# ── Proactive Initiative Subscriber ───────────────────────────────
+
+_initiative_subscriber_setup = False
+
+
+def setup_initiative_subscriber() -> None:
+    """Subscribe to CharacterInitiative events and push to connected WebSocket clients.
+
+    Called once at startup when initiative_enabled is True.
+    """
+    global _initiative_subscriber_setup
+    if _initiative_subscriber_setup:
+        return
+
+    bus = get_event_bus()
+
+    @bus.on(CharacterInitiative)
+    async def _push_initiative(event: CharacterInitiative) -> None:
+        """Push a proactive character message to the WebSocket and stream TTS audio."""
+        ws = _connections.get(event.device_id)
+        if ws is None:
+            return
+
+        logger.info(
+            f"[{event.device_id}] Pushing initiative: "
+            f"'{event.text[:50]}...' ({event.emotion})"
+        )
+
+        try:
+            # Generate TTS for the initiative text
+            from core.plugin_manager import get_plugin_registry
+            registry = get_plugin_registry()
+
+            # Resolve voice
+            voice_id = None
+            async with AsyncSessionLocal() as session:
+                voice_id = await queries.get_device_voice(session, event.device_id)
+            voice_id = voice_id or "edge_xiaoxiao"
+            voice = registry.get_voice(voice_id)
+            if voice is None:
+                voices = registry.list_voices()
+                voice = voices[0] if voices else None
+
+            # Synthesize TTS
+            tts = registry.active_tts
+            tts_text = strip_emotion_tags(event.text)
+            pcm_chunks: list[bytes] = []
+            rms_frames: list[float] = []
+            async for chunk in tts.synthesize(
+                text=tts_text,
+                voice=voice,
+                emotion=event.emotion,
+            ):
+                if chunk.audio:
+                    pcm_chunks.append(chunk.audio)
+                    rms_frames.append(chunk.rms)
+
+            # Send speech header
+            await ws.send_json(SpeechMessage(
+                text=event.text,
+                emotion=event.emotion,
+                rms_frames=rms_frames,
+                audio_chunks=len(pcm_chunks),
+            ).to_json())
+
+            # Send state → speaking
+            _connection_states[event.device_id] = DeviceState.SPEAKING
+            await ws.send_json(StateMessage(
+                state=DeviceState.SPEAKING,
+                emotion=event.emotion,
+                text=event.text,
+            ).to_json())
+
+            # Stream audio chunks
+            for audio in pcm_chunks:
+                await ws.send_bytes(encode_audio_frame(audio))
+
+            # Terminator
+            await ws.send_bytes(encode_audio_frame(b""))
+
+            # Back to idle
+            _connection_states[event.device_id] = DeviceState.IDLE
+            await ws.send_json(StateMessage(state=DeviceState.IDLE).to_json())
+
+        except Exception as e:
+            logger.error(f"Initiative push failed for {event.device_id}: {e}")
+
+    _initiative_subscriber_setup = True
+    logger.info("Initiative WebSocket subscriber set up")

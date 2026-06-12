@@ -192,6 +192,15 @@ class PluginRegistry:
         from plugins.tts.edge_tts import EdgeTTSProvider
         self.register_tts(EdgeTTSProvider)
 
+        from plugins.tts.cosyvoice import CosyVoice2Provider
+        self.register_tts(CosyVoice2Provider)
+
+        from plugins.tts.gpt_sovits import GPTSovitsProvider
+        self.register_tts(GPTSovitsProvider)
+
+        from plugins.tts.custom_endpoint import CustomEndpointProvider
+        self.register_tts(CustomEndpointProvider)
+
         # User-upload voice models are loaded from DB at startup
         logger.info(
             f"Discovered providers — "

@@ -150,7 +150,18 @@ class ClaudeProvider(LLMProvider):
         except json.JSONDecodeError:
             pass
 
+        # Format 5: Generic strip — remove any {emotion:...} wrapper, keep the text
+        emo_match = re.search(r'\{emotion:\s*"?(\w+)"?', raw)
+        emo = emo_match.group(1) if emo_match else "neutral"
+        clean = re.sub(
+            r'\s*\{emotion:\s*"?\w+"?\s*(?:,\s*text:\s*"?(.*?)"?)?\s*\}\s*',
+            r'\1', raw, flags=re.DOTALL
+        ).strip()
+        if clean and clean != raw:
+            return emo, clean
+
         # Fallback: keyword detection
+        logger.debug(f"Emotion parse fallback (keyword): {raw[:100]}")
         detected = self._detect_emotion(raw)
         return detected, raw
 

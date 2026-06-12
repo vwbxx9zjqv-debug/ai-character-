@@ -96,6 +96,52 @@ async def lifespan(app: FastAPI):
     logger_plugin = ConversationLogger()
     await logger_plugin.on_enable()
 
+    # 5. Start long-term memory system (L2/L3/L4) — if enabled
+    if settings.enable_long_term_memory:
+        try:
+            from services.memory_service import MemoryExtractionService
+            from services.milestone_service import MilestoneDetectionService
+            from services.reflection_service import ReflectionService
+
+            mem_service = MemoryExtractionService()
+            await mem_service.on_enable()
+            logger.info("  Memory: L2 fact extraction active")
+
+            milestone_service = MilestoneDetectionService()
+            await milestone_service.on_enable()
+            logger.info("  Memory: L3 milestone detection active")
+
+            reflection_service = ReflectionService()
+            await reflection_service.on_enable()
+            logger.info("  Memory: L4 character reflection active")
+        except Exception as e:
+            logger.warning(f"  Memory services skipped: {e}")
+
+    # 6. Start mood engine — if enabled
+    if settings.enable_mood_engine:
+        try:
+            from services.mood_engine import get_mood_engine
+            mood_engine = get_mood_engine()
+            await mood_engine.on_enable()
+            logger.info("  Mood: emotion engine active")
+        except Exception as e:
+            logger.warning(f"  Mood engine skipped: {e}")
+
+    # 7. Start proactive initiative engine + WebSocket subscriber — if enabled
+    if settings.initiative_enabled:
+        try:
+            from services.initiative_engine import get_initiative_engine
+            initiative_engine = get_initiative_engine()
+            await initiative_engine.on_enable()
+            logger.info("  Initiative: proactive speech engine active")
+
+            # Wire initiative events to WebSocket push
+            from routes.ws_chat import setup_initiative_subscriber
+            setup_initiative_subscriber()
+            logger.info("  Initiative: WebSocket subscriber active")
+        except Exception as e:
+            logger.warning(f"  Initiative engine skipped: {e}")
+
     logger.info(f"  Event bus: {bus.event_count} events processed")
     logger.info("Server ready! Listening on port " + str(settings.port))
     logger.info("=" * 60)

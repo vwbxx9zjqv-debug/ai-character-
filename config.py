@@ -58,13 +58,16 @@ class Settings(BaseSettings):
     # ── LLM Config ──────────────────────────────────────────────
     claude_model: str = "claude-haiku-4-5-20251001"
     llm_temperature: float = 0.8
-    llm_max_tokens: int = 256
+    llm_max_tokens: int = 200
     # DeepSeek (used by OpenAICompatibleProvider)
     deepseek_model: str = "deepseek-chat"
     deepseek_base_url: str = "https://api.deepseek.com"
 
     # ── TTS Config ──────────────────────────────────────────────
     edge_tts_voice: str = "zh-CN-XiaoxiaoNeural"
+    cosyvoice_endpoint: str = "http://localhost:5001"
+    gpt_sovits_endpoint: str = "http://localhost:9880"
+    custom_tts_endpoint: str = "http://localhost:8001"
 
     # ── Default Character ───────────────────────────────────────
     default_character: str = "hoshino_ruri"   # Default character config file
@@ -78,7 +81,7 @@ class Settings(BaseSettings):
     ws_heartbeat_timeout: int = 90            # Disconnect if no heartbeat
 
     # ── Conversation ────────────────────────────────────────────
-    max_history_turns: int = 10               # Recent turns in LLM context
+    max_history_turns: int = 5                # Recent turns in LLM context
     vad_silence_timeout_ms: int = 1200        # Matches ESP32 config
     max_recording_ms: int = 15000
 

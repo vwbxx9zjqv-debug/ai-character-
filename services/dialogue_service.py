@@ -19,7 +19,7 @@ from core.plugin_base import Message, TTSChunk
 from core.plugin_manager import get_plugin_registry
 from db.database import AsyncSessionLocal
 from db import queries
-from services.prompt_builder import build_system_prompt, get_current_time_str
+from services.prompt_builder import build_system_prompt, get_current_time_str, strip_emotion_tags
 
 logger = logging.getLogger("dialogue")
 
@@ -115,10 +115,13 @@ class DialogueService:
             emotion=llm_result.emotion,
         ))
 
+        # Strip any leaked emotion tags before TTS
+        tts_text = strip_emotion_tags(llm_result.text)
+
         # Stream TTS chunks
         chunks: list[TTSChunk] = []
         async for chunk in tts.synthesize(
-            text=llm_result.text,
+            text=tts_text,
             voice=voice,
             emotion=llm_result.emotion,
             emotion_intensity=llm_result.emotion_intensity,
@@ -168,20 +171,70 @@ class DialogueService:
 
     async def _load_system_prompt(self, device_id: str) -> str:
         """Build the character system prompt using the prompt builder engine."""
+        from datetime import datetime as dt
+
         async with AsyncSessionLocal() as session:
             character = await queries.get_device_character(session, device_id)
             facts = await queries.get_recent_facts(session, device_id, limit=10)
 
+            # Load L3 milestones and L4 character memories
+            milestones = await queries.get_milestones(session, device_id, limit=5)
+            char_memories = await queries.get_character_memories(
+                session, device_id, character.id if character else "", limit=3
+            )
+            first_date_str = await queries.get_first_interaction_date(session, device_id)
+
         if character is None:
             return "你是一个友善的虚拟伙伴。保持回复简短自然，2-4句话以内。"
 
-        # Use the prompt builder engine with runtime context
-        return build_system_prompt(
+        # Compute days_passed
+        days_passed = 0
+        if first_date_str:
+            try:
+                first_date = dt.fromisoformat(first_date_str.replace("Z", "+00:00"))
+                days_passed = (dt.now() - first_date.replace(tzinfo=None)).days
+            except (ValueError, TypeError):
+                pass
+
+        # Build relationship context from milestones
+        relationship_context = ""
+        if milestones:
+            recent_ms = [m.milestone for m in milestones[:3]]
+            relationship_context = "你们的关系里程碑：" + "；".join(recent_ms)
+
+        # Get current mood from mood engine (if enabled)
+        current_mood = ""
+        try:
+            from services.mood_engine import get_mood_engine
+            mood_engine = get_mood_engine()
+            if mood_engine.is_enabled:
+                current_mood = mood_engine.get_mood(device_id)
+        except Exception:
+            pass
+
+        # Add character private memories as subtle context
+        memory_context = ""
+        if char_memories:
+            memory_context = "你内心的想法：" + "；".join(
+                m.memory for m in char_memories
+            )
+
+        # Use the prompt builder engine with full runtime context
+        prompt = build_system_prompt(
             character,
             user_name=character.name_call if character.name_call and character.name_call not in ("你", "") else "",
             current_time=get_current_time_str(),
+            current_mood=current_mood,
+            days_passed=days_passed,
             recent_facts=facts,
+            relationship_context=relationship_context,
         )
+
+        # Append character private memories if present
+        if memory_context:
+            prompt += f"\n\n{memory_context}\n（这些是你内心的想法，不要直接说出来，但它们会影响你的回应方式。）"
+
+        return prompt
 
     async def _get_device_voice(self, device_id: str) -> str:
         """Get the current voice ID for a device."""

@@ -55,6 +55,24 @@ class FactRow:
     importance: int
 
 
+@dataclass
+class MilestoneRow:
+    id: int
+    device_id: str
+    milestone: str
+    day_count: int
+    created_at: str
+
+
+@dataclass
+class CharacterMemoryRow:
+    id: int
+    device_id: str
+    character_id: str
+    memory: str
+    created_at: str
+
+
 # ── Device Queries ────────────────────────────────────────────────
 
 async def get_device(session: AsyncSession, device_id: str) -> dict | None:
@@ -238,6 +256,89 @@ async def get_recent_facts(session: AsyncSession, device_id: str, limit: int = 1
         {"did": device_id, "lim": limit}
     )
     return [FactRow(id=row[0], fact=row[1], category=row[2], importance=row[3]) for row in result.fetchall()]
+
+
+async def get_facts_by_category(session: AsyncSession, device_id: str, category: str) -> list[FactRow]:
+    """Get facts for a device filtered by category (used for deduplication)."""
+    result = await session.execute(
+        text("SELECT id, fact, category, importance FROM user_facts WHERE device_id = :did AND category = :cat ORDER BY created_at DESC"),
+        {"did": device_id, "cat": category}
+    )
+    return [FactRow(id=row[0], fact=row[1], category=row[2], importance=row[3]) for row in result.fetchall()]
+
+
+# ── L3: Relationship Milestones ───────────────────────────────────
+
+async def save_milestone(session: AsyncSession, device_id: str, milestone: str, day_count: int = 0) -> None:
+    """Insert a relationship milestone."""
+    await session.execute(
+        text("INSERT INTO relationship_milestones (device_id, milestone, day_count) VALUES (:did, :milestone, :day)"),
+        {"did": device_id, "milestone": milestone, "day": day_count}
+    )
+
+
+async def get_milestones(session: AsyncSession, device_id: str, limit: int = 5) -> list[MilestoneRow]:
+    """Get recent relationship milestones for a device."""
+    result = await session.execute(
+        text("SELECT id, device_id, milestone, day_count, created_at FROM relationship_milestones WHERE device_id = :did ORDER BY created_at DESC LIMIT :lim"),
+        {"did": device_id, "lim": limit}
+    )
+    return [
+        MilestoneRow(id=row[0], device_id=row[1], milestone=row[2], day_count=row[3], created_at=row[4])
+        for row in result.fetchall()
+    ]
+
+
+async def has_milestone(session: AsyncSession, device_id: str, milestone_pattern: str) -> bool:
+    """Check if a milestone matching the pattern already exists (prevent duplicates)."""
+    result = await session.execute(
+        text("SELECT COUNT(*) FROM relationship_milestones WHERE device_id = :did AND milestone LIKE :pat"),
+        {"did": device_id, "pat": f"%{milestone_pattern}%"}
+    )
+    return result.scalar() > 0
+
+
+# ── L4: Character Internal Memories ───────────────────────────────
+
+async def save_character_memory(session: AsyncSession, device_id: str, character_id: str, memory: str) -> None:
+    """Insert a character private reflection."""
+    await session.execute(
+        text("INSERT INTO character_memories (device_id, character_id, memory) VALUES (:did, :cid, :mem)"),
+        {"did": device_id, "cid": character_id, "mem": memory}
+    )
+
+
+async def get_character_memories(session: AsyncSession, device_id: str, character_id: str, limit: int = 5) -> list[CharacterMemoryRow]:
+    """Get recent character private memories."""
+    result = await session.execute(
+        text("SELECT id, device_id, character_id, memory, created_at FROM character_memories WHERE device_id = :did AND character_id = :cid ORDER BY created_at DESC LIMIT :lim"),
+        {"did": device_id, "cid": character_id, "lim": limit}
+    )
+    return [
+        CharacterMemoryRow(id=row[0], device_id=row[1], character_id=row[2], memory=row[3], created_at=row[4])
+        for row in result.fetchall()
+    ]
+
+
+# ── Helper Queries ────────────────────────────────────────────────
+
+async def get_first_interaction_date(session: AsyncSession, device_id: str) -> str | None:
+    """Get the date of the first conversation with this device."""
+    result = await session.execute(
+        text("SELECT MIN(created_at) FROM conversations WHERE device_id = :did"),
+        {"did": device_id}
+    )
+    val = result.scalar()
+    return val if val else None
+
+
+async def count_conversations(session: AsyncSession, device_id: str) -> int:
+    """Count total conversation turns for a device."""
+    result = await session.execute(
+        text("SELECT COUNT(*) FROM conversations WHERE device_id = :did AND role = 'user'"),
+        {"did": device_id}
+    )
+    return result.scalar() or 0
 
 
 # ── Helpers ───────────────────────────────────────────────────────

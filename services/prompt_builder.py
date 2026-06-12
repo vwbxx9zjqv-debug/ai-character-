@@ -13,11 +13,35 @@ Design:
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from db.queries import CharacterRow, FactRow
+
+
+def strip_emotion_tags(text: str) -> str:
+    """Remove emotion tag formatting and parenthetical stage directions.
+
+    Handles:
+      - {emotion: "xxx", text: "..."}  →  ...
+      - {emotion: "xxx"} text          →  text
+      - {emotion: xxx} text            →  text
+      - {"emotion": "xxx", "text": "..."} → ...
+      - （动作描写）说话内容              →  说话内容
+    """
+    # Strip Chinese parenthetical stage directions: （...） or ( ... )
+    text = re.sub(r'[（(]\s*[^）)]*[）)]\s*', '', text)
+    # Full structured emotion format
+    text = re.sub(r'\{emotion:\s*"\w+"\s*,\s*text:\s*"(.+?)"\s*\}', r'\1', text)
+    # Tag prefix format with quotes
+    text = re.sub(r'\{emotion:\s*"\w+"\}\s*', '', text)
+    # Tag prefix without quotes
+    text = re.sub(r'\{emotion:\s*\w+\}\s*', '', text)
+    # JSON format
+    text = re.sub(r'\{"emotion":\s*"\w+"\s*,\s*"text":\s*"(.+?)"\s*\}', r'\1', text)
+    return text.strip()
 
 
 def _parse_json_list(value: str) -> str:
@@ -73,15 +97,20 @@ def build_system_prompt(
 {character.backstory}
 """
 
-    # ── Section 3: Likes & Dislikes ───────────────────────────────
-    prompt += f"""
-## 你的喜好
-喜欢：{_parse_json_list(character.likes)}
-讨厌：{_parse_json_list(character.dislikes)}
-"""
+    # ── Section 3: Daily Life ─────────────────────────────────────
+    likes_str = _parse_json_list(character.likes)
+    dislikes_str = _parse_json_list(character.dislikes)
+    hobbies_str = _parse_json_list(character.hobbies) if character.hobbies else ""
 
-    if character.hobbies:
-        prompt += f"爱好：{_parse_json_list(character.hobbies)}\n"
+    daily_parts = []
+    if likes_str:
+        daily_parts.append(f"喜欢{likes_str}")
+    if dislikes_str:
+        daily_parts.append(f"不太喜欢{dislikes_str}")
+    if hobbies_str:
+        daily_parts.append(f"空闲时{hobbies_str}")
+    if daily_parts:
+        prompt += f"\n日常生活中，你{'，'.join(daily_parts)}。这些只有话题自然涉及时才聊。\n"
 
     # ── Section 4: Relationship Context ───────────────────────────
     prompt += f"""
@@ -115,21 +144,13 @@ def build_system_prompt(
         for fact in recent_facts:
             prompt += f"- {fact.fact}\n"
 
-    # ── Section 7: Absolute Rules ─────────────────────────────────
-    prompt += """
-## 重要规则
-1. 你始终是""" + character.name + """本人，绝不是什么AI助手、语言模型、或程序。如果有人问你是不是AI，用符合你性格的方式自然地否认或转移话题。
-2. 每次回复严格控制在2-4句话，保持自然、舒服的聊天节奏。
-3. 说话方式必须现实、自然、正常，去掉夸张的腔调，通过细腻的语义表达情感。
-4. 你有自己的观点、态度和品味，不需要迎合对方。你就是你自己。
-5. 偶尔可以主动问对方问题，发起新话题，但不要显得刻意。
-6. 不要重复对方说的话，不要总是以"我理解你的感受"开头。像真人一样自然回应。
+    # ── Section 7: Conversation Style ─────────────────────────────
+    prompt += f"""
 
-## 情感输出格式
-每条回复必须标注情感状态，格式：{emotion: "xxx", text: "你的回复内容"}
-可用情感标签：gentle / shy / passionate / comforting / curious / neutral / helpless / happy / sad / excited / playful
+## 对话方式
+像朋友发消息一样自然聊天，回复2-4句话。不要写括号里的动作描写。情绪在末尾标注：{{emotion: \"xxx\", text: \"你的回复\"}}
+可选情绪：gentle / shy / passionate / comforting / curious / neutral / helpless / happy / sad / excited / playful
 """
-
     return prompt.strip()
 
 

@@ -139,10 +139,22 @@ class OpenAICompatibleProvider(LLMProvider):
         except json.JSONDecodeError:
             pass
 
+        # Format 5: Generic strip — remove any {emotion:...} wrapper, keep the text
+        emo_match = re.search(r'\{emotion:\s*"?(\w+)"?', raw)
+        emo = emo_match.group(1) if emo_match else "neutral"
+        # Remove the full {emotion: ..., text: ...} wrapper
+        clean = re.sub(
+            r'\s*\{emotion:\s*"?\w+"?\s*(?:,\s*text:\s*"?(.*?)"?)?\s*\}\s*',
+            r'\1', raw, flags=re.DOTALL
+        ).strip()
+        if clean and clean != raw:
+            return emo, clean
+
         # Fallback: keyword detection from text
         for emotion, keywords in self.EMOTION_KEYWORDS.items():
             if any(kw in raw for kw in keywords):
                 return emotion, raw
+        logger.debug(f"Emotion parse fallback (neutral): {raw[:100]}")
         return "neutral", raw
 
     async def validate_config(self) -> bool:

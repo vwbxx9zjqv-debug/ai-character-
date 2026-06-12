@@ -23,7 +23,7 @@ from core.plugin_base import Message
 from core.plugin_manager import get_plugin_registry
 from db.database import AsyncSessionLocal
 from db import queries
-from services.prompt_builder import build_system_prompt, get_current_time_str
+from services.prompt_builder import build_system_prompt, get_current_time_str, strip_emotion_tags
 
 logger = logging.getLogger("browser")
 
@@ -61,6 +61,8 @@ async def browser_chat(req: ChatRequest) -> ChatResponse:
     Flow: text → LLM → TTS → return text + audio
     (STT is done client-side via browser Web Speech API)
     """
+    t_total = time.time()
+
     if not req.text.strip():
         raise HTTPException(400, "Text cannot be empty")
 
@@ -69,20 +71,70 @@ async def browser_chat(req: ChatRequest) -> ChatResponse:
     tts = registry.active_tts
 
     # ── 1. Load character & context ──────────────────────────────
+    t_db = time.time()
+    from datetime import datetime as dt
+
     async with AsyncSessionLocal() as session:
         character = await queries.get_device_character(session, req.device_id)
-        history_rows = await queries.get_recent_history(session, req.device_id, limit=10)
-        facts = await queries.get_recent_facts(session, req.device_id, limit=10)
+        history_rows = await queries.get_recent_history(session, req.device_id, limit=5)
+        facts = await queries.get_recent_facts(session, req.device_id, limit=5)
+
+        # Load L3 milestones and L4 character memories
+        milestones = await queries.get_milestones(session, req.device_id, limit=5)
+        char_memories = await queries.get_character_memories(
+            session, req.device_id, character.id if character else "", limit=3
+        )
+        first_date_str = await queries.get_first_interaction_date(session, req.device_id)
+
+    # Compute days_passed
+    days_passed = 0
+    if first_date_str:
+        try:
+            first_date = dt.fromisoformat(first_date_str.replace("Z", "+00:00"))
+            days_passed = (dt.now() - first_date.replace(tzinfo=None)).days
+        except (ValueError, TypeError):
+            pass
+
+    # Build relationship context from milestones
+    relationship_context = ""
+    if milestones:
+        recent_ms = [m.milestone for m in milestones[:3]]
+        relationship_context = "你们的关系里程碑：" + "；".join(recent_ms)
+
+    # Get current mood from mood engine (if enabled)
+    current_mood = ""
+    try:
+        from services.mood_engine import get_mood_engine
+        mood_engine = get_mood_engine()
+        if mood_engine.is_enabled:
+            current_mood = mood_engine.get_mood(req.device_id)
+    except Exception:
+        pass
+
+    # Build character memory context
+    memory_context = ""
+    if char_memories:
+        memory_context = "你内心的想法：" + "；".join(
+            m.memory for m in char_memories
+        )
+
+    t_db = int((time.time() - t_db) * 1000)
 
     # ── 2. Build system prompt ───────────────────────────────────
+    t_prompt = time.time()
     if character:
         user_name = character.name_call if character.name_call and character.name_call not in ("你", "") else ""
         system_prompt = build_system_prompt(
             character,
             user_name=user_name,
             current_time=get_current_time_str(),
+            current_mood=current_mood,
+            days_passed=days_passed,
             recent_facts=facts,
+            relationship_context=relationship_context,
         )
+        if memory_context:
+            system_prompt += f"\n\n{memory_context}\n（这些是你内心的想法，不要直接说出来，但它们会影响你的回应方式。）"
     else:
         system_prompt = "你是一个友善的虚拟伙伴。保持回复简短自然，2-4句话以内。"
 
@@ -93,15 +145,19 @@ async def browser_chat(req: ChatRequest) -> ChatResponse:
     ]
     messages.append(Message(role="user", content=req.text))
 
-    # ── 4. Call LLM ──────────────────────────────────────────────
-    llm_result = await llm.chat(messages, system_prompt=system_prompt)
+    t_prompt = int((time.time() - t_prompt) * 1000)
 
+    # ── 4. Call LLM ──────────────────────────────────────────────
+    t_llm = time.time()
+    llm_result = await llm.chat(messages, system_prompt=system_prompt)
+    t_llm = int((time.time() - t_llm) * 1000)
     logger.info(
-        f"[browser] LLM response: emotion={llm_result.emotion}, "
-        f"text='{llm_result.text[:60]}...'"
+        f"[browser] LLM: emotion={llm_result.emotion} "
+        f"text='{llm_result.text[:50]}...' ({t_llm}ms)"
     )
 
     # ── 5. Save conversation ─────────────────────────────────────
+    t_save = time.time()
     async with AsyncSessionLocal() as session:
         await queries.save_conversation(
             session, req.device_id, "user", req.text,
@@ -112,7 +168,13 @@ async def browser_chat(req: ChatRequest) -> ChatResponse:
         )
         await session.commit()
 
-    # ── 6. Call TTS ──────────────────────────────────────────────
+    t_save = int((time.time() - t_save) * 1000)
+
+    # ── 6. Clean text & Call TTS ─────────────────────────────────
+    t_tts = time.time()
+    # Strip any leaked emotion tags before both TTS and display
+    clean_text = strip_emotion_tags(llm_result.text)
+
     voice_id = "edge_xiaoxiao"  # Default, can be made configurable
     voice = registry.get_voice(voice_id)
     if voice is None:
@@ -127,7 +189,7 @@ async def browser_chat(req: ChatRequest) -> ChatResponse:
             # Collect all PCM chunks
             pcm_chunks: list[bytes] = []
             async for chunk in tts.synthesize(
-                text=llm_result.text,
+                text=clean_text,
                 voice=voice,
                 emotion=llm_result.emotion,
             ):
@@ -143,9 +205,16 @@ async def browser_chat(req: ChatRequest) -> ChatResponse:
         except Exception as e:
             logger.error(f"TTS error: {e}", exc_info=True)
 
+    t_tts = int((time.time() - t_tts) * 1000)
+    t_total = int((time.time() - t_total) * 1000)
+    logger.info(
+        f"[browser] Turn complete: {t_total}ms "
+        f"(DB={t_db}ms prompt={t_prompt}ms LLM={t_llm}ms save={t_save}ms TTS={t_tts}ms)"
+    )
+
     return ChatResponse(
         user_text=req.text,
-        assistant_text=llm_result.text,
+        assistant_text=clean_text,
         emotion=llm_result.emotion,
         audio_base64=audio_base64,
         audio_duration_ms=audio_duration_ms,
