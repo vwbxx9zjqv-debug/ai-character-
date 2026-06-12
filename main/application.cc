@@ -5,6 +5,7 @@
 #include "audio_codec.h"
 #include "mqtt_protocol.h"
 #include "websocket_protocol.h"
+#include "ws_v3_protocol.h"
 #include "assets/lang_config.h"
 #include "mcp_server.h"
 #include "assets.h"
@@ -263,7 +264,7 @@ void Application::HandleNetworkConnectedEvent() {
     auto state = GetDeviceState();
 
     if (state == kDeviceStateStarting || state == kDeviceStateWifiConfiguring) {
-        // Network is ready, start activation
+        // Network ready — start our protocol (no cloud activation)
         SetDeviceState(kDeviceStateActivating);
         if (activation_task_handle_ != nullptr) {
             ESP_LOGW(TAG, "Activation task already running");
@@ -276,9 +277,15 @@ void Application::HandleNetworkConnectedEvent() {
             app->activation_task_handle_ = nullptr;
             vTaskDelete(NULL);
         }, "activation", 4096 * 2, this, 2, &activation_task_handle_);
+    } else if (state == kDeviceStateIdle) {
+        // Reconnected — re-open audio channel
+        Schedule([this]() {
+            if (protocol_) {
+                protocol_->OpenAudioChannel();
+            }
+        });
     }
 
-    // Update the status bar immediately to show the network state
     auto display = Board::GetInstance().GetDisplay();
     display->UpdateStatusBar(true);
 }
@@ -321,16 +328,7 @@ void Application::HandleActivationDoneEvent() {
 }
 
 void Application::ActivationTask() {
-    // Create OTA object for activation process
-    ota_ = std::make_unique<Ota>();
-
-    // Check for new assets version
-    CheckAssetsVersion();
-
-    // Check for new firmware version
-    CheckNewVersion();
-
-    // Initialize the protocol
+    // Simplified: no cloud activation — directly connect to our backend
     InitializeProtocol();
 
     // Signal completion to main loop
@@ -475,40 +473,87 @@ void Application::InitializeProtocol() {
     auto display = board.GetDisplay();
     auto codec = board.GetAudioCodec();
 
-    display->SetStatus(Lang::Strings::LOADING_PROTOCOL);
+    display->SetStatus("Connecting to companion backend...");
 
-    if (ota_->HasMqttConfig()) {
-        protocol_ = std::make_unique<MqttProtocol>();
-    } else if (ota_->HasWebsocketConfig()) {
-        protocol_ = std::make_unique<WebsocketProtocol>();
-    } else {
-        ESP_LOGW(TAG, "No protocol specified in the OTA config, using MQTT");
-        protocol_ = std::make_unique<MqttProtocol>();
-    }
+    // Always use WebSocket v3 protocol — no cloud activation needed
+    auto v3 = std::make_unique<WsV3Protocol>();
 
-    protocol_->OnConnected([this]() {
-        DismissAlert();
-    });
+    // Server URL: ws://{host}:{port}/ws/chat/{device_id}
+    Settings ws_settings("ws_v3", false);
+    std::string host = ws_settings.GetString("host", "192.168.1.100");
+    int port = ws_settings.GetInt("port", 8000);
+    std::string device_id = SystemInfo::GetMacAddress();
+    std::string url = "ws://" + host + ":" + std::to_string(port) + "/ws/chat/" + device_id;
+    v3->SetServerUrl(url);
+    ESP_LOGI(TAG, "Backend URL: %s", url.c_str());
 
+    // ── V3 Protocol Callbacks ──
+    WsV3Callbacks cb;
+
+    cb.on_state = [this, display](const std::string& state, const std::string& emotion) {
+        Schedule([this, display, state, emotion]() {
+            if (state == WS_V3_STATE_LISTENING) {
+                SetDeviceState(kDeviceStateListening);
+            } else if (state == WS_V3_STATE_THINKING) {
+                SetDeviceState(kDeviceStateSpeaking);
+            } else if (state == WS_V3_STATE_SPEAKING) {
+                aborted_ = false;
+                SetDeviceState(kDeviceStateSpeaking);
+            } else if (state == WS_V3_STATE_IDLE) {
+                SetDeviceState(kDeviceStateIdle);
+            }
+            display->SetEmotion(emotion.c_str());
+        });
+    };
+
+    cb.on_speech_start = [this](const std::string& text, const std::string& emotion, int audio_chunks) {
+        Schedule([this, text]() {
+            auto display = Board::GetInstance().GetDisplay();
+            display->SetChatMessage("assistant", text.c_str());
+        });
+    };
+
+    cb.on_subtitle = [this](const std::string& text) {
+        Schedule([this, text]() {
+            auto display = Board::GetInstance().GetDisplay();
+            display->SetChatMessage("system", text.c_str());
+        });
+    };
+
+    cb.on_connected = [this]() {
+        ESP_LOGI(TAG, "Connected to companion backend");
+        Schedule([this]() { DismissAlert(); });
+    };
+
+    cb.on_disconnected = [this]() {
+        Schedule([this]() {
+            auto display = Board::GetInstance().GetDisplay();
+            display->SetChatMessage("system", "Disconnected");
+            SetDeviceState(kDeviceStateIdle);
+        });
+    };
+
+    v3->SetCallbacks(std::move(cb));
+    protocol_ = std::move(v3);
+
+    // ── Standard protocol callbacks ──
+    protocol_->OnConnected([this]() { DismissAlert(); });
     protocol_->OnNetworkError([this](const std::string& message) {
         last_error_message_ = message;
         xEventGroupSetBits(event_group_, MAIN_EVENT_ERROR);
     });
-    
     protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
         if (GetDeviceState() == kDeviceStateSpeaking) {
             audio_service_.PushPacketToDecodeQueue(std::move(packet));
         }
     });
-    
     protocol_->OnAudioChannelOpened([this, codec, &board]() {
         board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
         if (protocol_->server_sample_rate() != codec->output_sample_rate()) {
-            ESP_LOGW(TAG, "Server sample rate %d does not match device output sample rate %d, resampling may cause distortion",
+            ESP_LOGW(TAG, "Server sample rate %d != device output sample rate %d",
                 protocol_->server_sample_rate(), codec->output_sample_rate());
         }
     });
-    
     protocol_->OnAudioChannelClosed([this, &board]() {
         board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
         Schedule([this]() {
@@ -517,96 +562,9 @@ void Application::InitializeProtocol() {
             SetDeviceState(kDeviceStateIdle);
         });
     });
-    
-    protocol_->OnIncomingJson([this, display](const cJSON* root) {
-        // Parse JSON data
-        auto type = cJSON_GetObjectItem(root, "type");
-        if (strcmp(type->valuestring, "tts") == 0) {
-            auto state = cJSON_GetObjectItem(root, "state");
-            if (strcmp(state->valuestring, "start") == 0) {
-                Schedule([this]() {
-                    aborted_ = false;
-                    SetDeviceState(kDeviceStateSpeaking);
-                });
-            } else if (strcmp(state->valuestring, "stop") == 0) {
-                Schedule([this]() {
-                    if (GetDeviceState() == kDeviceStateSpeaking) {
-                        if (listening_mode_ == kListeningModeManualStop) {
-                            SetDeviceState(kDeviceStateIdle);
-                        } else {
-                            SetDeviceState(kDeviceStateListening);
-                        }
-                    }
-                });
-            } else if (strcmp(state->valuestring, "sentence_start") == 0) {
-                auto text = cJSON_GetObjectItem(root, "text");
-                if (cJSON_IsString(text)) {
-                    ESP_LOGI(TAG, "<< %s", text->valuestring);
-                    Schedule([display, message = std::string(text->valuestring)]() {
-                        display->SetChatMessage("assistant", message.c_str());
-                    });
-                }
-            }
-        } else if (strcmp(type->valuestring, "stt") == 0) {
-            auto text = cJSON_GetObjectItem(root, "text");
-            if (cJSON_IsString(text)) {
-                ESP_LOGI(TAG, ">> %s", text->valuestring);
-                Schedule([display, message = std::string(text->valuestring)]() {
-                    display->SetChatMessage("user", message.c_str());
-                });
-            }
-        } else if (strcmp(type->valuestring, "llm") == 0) {
-            auto emotion = cJSON_GetObjectItem(root, "emotion");
-            if (cJSON_IsString(emotion)) {
-                Schedule([display, emotion_str = std::string(emotion->valuestring)]() {
-                    display->SetEmotion(emotion_str.c_str());
-                });
-            }
-        } else if (strcmp(type->valuestring, "mcp") == 0) {
-            auto payload = cJSON_GetObjectItem(root, "payload");
-            if (cJSON_IsObject(payload)) {
-                McpServer::GetInstance().ParseMessage(payload);
-            }
-        } else if (strcmp(type->valuestring, "system") == 0) {
-            auto command = cJSON_GetObjectItem(root, "command");
-            if (cJSON_IsString(command)) {
-                ESP_LOGI(TAG, "System command: %s", command->valuestring);
-                if (strcmp(command->valuestring, "reboot") == 0) {
-                    // Do a reboot if user requests a OTA update
-                    Schedule([this]() {
-                        Reboot();
-                    });
-                } else {
-                    ESP_LOGW(TAG, "Unknown system command: %s", command->valuestring);
-                }
-            }
-        } else if (strcmp(type->valuestring, "alert") == 0) {
-            auto status = cJSON_GetObjectItem(root, "status");
-            auto message = cJSON_GetObjectItem(root, "message");
-            auto emotion = cJSON_GetObjectItem(root, "emotion");
-            if (cJSON_IsString(status) && cJSON_IsString(message) && cJSON_IsString(emotion)) {
-                Alert(status->valuestring, message->valuestring, emotion->valuestring, Lang::Sounds::OGG_VIBRATION);
-            } else {
-                ESP_LOGW(TAG, "Alert command requires status, message and emotion");
-            }
-#if CONFIG_RECEIVE_CUSTOM_MESSAGE
-        } else if (strcmp(type->valuestring, "custom") == 0) {
-            auto payload = cJSON_GetObjectItem(root, "payload");
-            ESP_LOGI(TAG, "Received custom message: %s", cJSON_PrintUnformatted(root));
-            if (cJSON_IsObject(payload)) {
-                Schedule([this, display, payload_str = std::string(cJSON_PrintUnformatted(payload))]() {
-                    display->SetChatMessage("system", payload_str.c_str());
-                });
-            } else {
-                ESP_LOGW(TAG, "Invalid custom message format: missing payload");
-            }
-#endif
-        } else {
-            ESP_LOGW(TAG, "Unknown message type: %s", type->valuestring);
-        }
-    });
-    
+
     protocol_->Start();
+    protocol_->OpenAudioChannel();
 }
 
 void Application::ShowActivationCode(const std::string& code, const std::string& message) {
