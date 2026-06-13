@@ -309,15 +309,20 @@ void Application::HandleActivationDoneEvent() {
     SystemInfo::PrintHeapStats();
     SetDeviceState(kDeviceStateIdle);
 
-    has_server_time_ = ota_->HasServerTime();
-
     auto display = Board::GetInstance().GetDisplay();
-    std::string message = std::string(Lang::Strings::VERSION) + ota_->GetCurrentVersion();
-    display->ShowNotification(message.c_str());
+
+    // Handle OTA data if available (may be null in simplified activation)
+    if (ota_) {
+        has_server_time_ = ota_->HasServerTime();
+        std::string message = std::string(Lang::Strings::VERSION) + ota_->GetCurrentVersion();
+        display->ShowNotification(message.c_str());
+        ota_.reset();
+    } else {
+        display->ShowNotification(Lang::Strings::VERSION);
+    }
+
     display->SetChatMessage("system", "");
 
-    // Release OTA object after activation is complete
-    ota_.reset();
     auto& board = Board::GetInstance();
     board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
 
@@ -480,7 +485,7 @@ void Application::InitializeProtocol() {
 
     // Server URL: ws://{host}:{port}/ws/chat/{device_id}
     Settings ws_settings("ws_v3", false);
-    std::string host = ws_settings.GetString("host", "192.168.1.100");
+    std::string host = ws_settings.GetString("host", "192.168.10.2");
     int port = ws_settings.GetInt("port", 8000);
     std::string device_id = SystemInfo::GetMacAddress();
     std::string url = "ws://" + host + ":" + std::to_string(port) + "/ws/chat/" + device_id;
