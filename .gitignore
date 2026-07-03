@@ -24,5 +24,8 @@ Thumbs.db
 uploads/*
 !uploads/.gitkeep
 
+# Models (large binary files)
+models/
+
 # Logs
 *.log

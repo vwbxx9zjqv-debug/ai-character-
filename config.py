@@ -65,6 +65,10 @@ class Settings(BaseSettings):
 
     # ── TTS Config ──────────────────────────────────────────────
     edge_tts_voice: str = "zh-CN-XiaoxiaoNeural"
+    minimax_api_key: str = ""
+    minimax_tts_model: str = "speech-2.6-turbo"
+    minimax_tts_voice_id: str = "female-shaonv"
+    minimax_base_url: str = "https://api.minimaxi.com/v1"
     cosyvoice_endpoint: str = "http://localhost:5001"
     gpt_sovits_endpoint: str = "http://localhost:9880"
     custom_tts_endpoint: str = "http://localhost:8001"

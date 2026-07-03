@@ -36,6 +36,40 @@ logging.basicConfig(
 )
 logger = logging.getLogger("main")
 
+
+# ── Provider Config Builders ────────────────────────────────────────
+
+def _build_stt_config(settings) -> dict:
+    """Build STT config dict based on the active provider type."""
+    stt_name = settings.default_stt
+
+    if stt_name == "SenseVoiceProvider":
+        model_dir = settings.database_url  # placeholder, use env-based path
+        import os
+        model_dir = os.environ.get(
+            "SENSEVOICE_MODEL_DIR",
+            "models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17",
+        )
+        # Resolve relative to backend dir
+        from pathlib import Path as _Path
+        backend_dir = _Path(__file__).parent
+        if not _Path(model_dir).is_absolute():
+            model_dir = str(backend_dir / model_dir)
+        return {
+            "model_dir": model_dir,
+            "model_file": os.environ.get("SENSEVOICE_MODEL_FILE", "model.int8.onnx"),
+            "language": os.environ.get("SENSEVOICE_LANGUAGE", "zh"),
+            "use_itn": os.environ.get("SENSEVOICE_USE_ITN", "true").lower() == "true",
+            "num_threads": int(os.environ.get("SENSEVOICE_NUM_THREADS", "4")),
+        }
+
+    # Default for WhisperAPI / LocalWhisper
+    return {
+        "model": settings.whisper_model,
+        "language": settings.whisper_language,
+    }
+
+
 # ── App Lifecycle ─────────────────────────────────────────────────
 
 @asynccontextmanager
@@ -59,7 +93,7 @@ async def lifespan(app: FastAPI):
     try:
         await registry.activate_stt(
             settings.default_stt,
-            {"model": settings.whisper_model, "language": settings.whisper_language}
+            _build_stt_config(settings),
         )
         logger.info(f"  STT: {registry.active_stt.display_name}")
     except Exception as e:

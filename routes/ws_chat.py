@@ -19,11 +19,12 @@ from core.ws_protocol import (
     MessageType, DeviceState,
     SpeechMessage, StateMessage, CharacterSyncMessage,
     SwitchModelMessage, ErrorMessage,
-    encode_audio_frame, parse_message,
+    encode_audio_frame, parse_message, decode_audio_frames,
     SpeechSegmentMessage, HeartbeatMessage, InitiativeMessage,
 )
 from core.event_bus import get_event_bus, CharacterInitiative
 from core.plugin_base import Message
+from core.ogg_opus import wrap_opus_frames
 from services.dialogue_service import get_dialogue_service
 from services.prompt_builder import strip_emotion_tags
 from db.database import AsyncSessionLocal
@@ -36,6 +37,8 @@ router = APIRouter()
 # Track connected devices
 _connections: dict[str, WebSocket] = {}
 _connection_states: dict[str, str] = {}  # device_id → current state
+_audio_buffers: dict[str, list[bytes]] = {}  # device_id → accumulated Opus frames
+_listening_sessions: dict[str, bool] = {}  # device_id → actively listening
 
 
 @router.websocket("/ws/chat/{device_id}")
@@ -77,6 +80,8 @@ async def ws_chat(websocket: WebSocket, device_id: str):
     finally:
         _connections.pop(device_id, None)
         _connection_states.pop(device_id, None)
+        _audio_buffers.pop(device_id, None)
+        _listening_sessions.pop(device_id, None)
 
 
 async def _handle_json_message(
@@ -93,9 +98,27 @@ async def _handle_json_message(
         await ws.send_json({"v": PROTOCOL_VERSION, "type": "pong", "ts": time.time()})
 
     elif isinstance(msg, SpeechSegmentMessage):
-        # Audio segment header — actual audio comes as next binary frame
-        # (handled in _handle_binary_audio)
+        # Audio segment header — audio follows as binary frames
         pass
+
+    elif isinstance(msg, StateMessage):
+        # Track listening session boundaries for audio accumulation
+        new_state = msg.state
+        old_state = _connection_states.get(device_id, "")
+        _connection_states[device_id] = new_state
+
+        if new_state == DeviceState.LISTENING and old_state != DeviceState.LISTENING:
+            _audio_buffers[device_id] = []
+            _listening_sessions[device_id] = True
+            logger.info(f"[{device_id}] Listening session started")
+        elif new_state != DeviceState.LISTENING and _listening_sessions.get(device_id):
+            _listening_sessions[device_id] = False
+            frames = _audio_buffers.pop(device_id, [])
+            if frames:
+                asyncio.create_task(
+                    _process_accumulated_audio(ws, device_id, list(frames), dialogue)
+                )
+            logger.info(f"[{device_id}] Listening session ended ({len(frames)} frames)")
 
     elif msg.type == MessageType.LIST_MODELS:
         model_type = getattr(msg, "model_type", "pet")
@@ -132,10 +155,34 @@ async def _handle_binary_audio(
     audio_data: bytes,
     dialogue,
 ) -> None:
-    """Process incoming audio segment from ESP32."""
+    """Accumulate binary audio frames from ESP32. Process when listening session ends."""
 
-    if len(audio_data) < 100:  # Too small to be meaningful speech
+    # Decode frames from the 4-byte LE length prefix format
+    frames = decode_audio_frames(audio_data)
+    if not frames:
         return
+
+    # Accumulate Opus frames for this listening session
+    if device_id not in _audio_buffers:
+        _audio_buffers[device_id] = []
+    _audio_buffers[device_id].extend(frames)
+    total = len(_audio_buffers[device_id])
+    if total % 50 == 0 or total <= 5:
+        logger.info(f"[{device_id}] Buffered {total} audio frames so far")
+
+
+async def _process_accumulated_audio(
+    ws: WebSocket,
+    device_id: str,
+    opus_frames: list[bytes],
+    dialogue,
+) -> None:
+    """Wrap accumulated Opus frames in Ogg container and run dialogue pipeline."""
+    if not opus_frames:
+        logger.warning(f"[{device_id}] No audio frames to process")
+        return
+
+    logger.info(f"[{device_id}] Processing {len(opus_frames)} Opus frames")
 
     # Update state
     _connection_states[device_id] = DeviceState.THINKING
@@ -145,7 +192,19 @@ async def _handle_binary_audio(
     ).to_json())
 
     try:
-        # Load conversation history
+        # ── Wrap Opus frames in Ogg container ──────────────────
+        # Whisper API supports .ogg format natively
+        audio_bytes = wrap_opus_frames(opus_frames, sample_rate=16000)
+
+        if len(audio_bytes) < 200:
+            logger.warning(f"[{device_id}] Ogg too small ({len(audio_bytes)} bytes), skipping")
+            _connection_states[device_id] = DeviceState.IDLE
+            await ws.send_json(StateMessage(state=DeviceState.IDLE).to_json())
+            return
+
+        logger.info(f"[{device_id}] Ogg size: {len(audio_bytes)} bytes, sending to STT")
+
+        # ── Run dialogue pipeline ─────────────────────────────
         async with AsyncSessionLocal() as session:
             history_rows = await queries.get_recent_history(session, device_id, limit=10)
         history = [
@@ -153,26 +212,24 @@ async def _handle_binary_audio(
             for r in history_rows
         ]
 
-        # Run dialogue pipeline
         chunks = await dialogue.process_speech(
             device_id=device_id,
-            audio=audio_data,
+            audio=audio_bytes,
+            audio_format="ogg",  # Ogg Opus → Whisper API supports this
             conversation_history=history,
         )
 
         if not chunks:
-            # Empty response (e.g., silence)
             _connection_states[device_id] = DeviceState.IDLE
             await ws.send_json(StateMessage(state=DeviceState.IDLE).to_json())
             return
 
-        # Get the LLM response text from last turn
+        # ── Stream response back ──────────────────────────────
         async with AsyncSessionLocal() as session:
             hist = await queries.get_recent_history(session, device_id, limit=1)
         assistant_text = hist[-1]["content"] if hist and hist[-1]["role"] == "assistant" else ""
         assistant_emotion = hist[-1].get("emotion", "neutral") if hist else "neutral"
 
-        # Send speech header
         rms_frames = [c.rms for c in chunks if c.audio]
         await ws.send_json(SpeechMessage(
             text=assistant_text,
@@ -181,7 +238,6 @@ async def _handle_binary_audio(
             audio_chunks=len(chunks),
         ).to_json())
 
-        # Send state → speaking
         _connection_states[device_id] = DeviceState.SPEAKING
         await ws.send_json(StateMessage(
             state=DeviceState.SPEAKING,
@@ -189,26 +245,19 @@ async def _handle_binary_audio(
             text=assistant_text,
         ).to_json())
 
-        # Stream audio chunks as binary frames
         for chunk in chunks:
             if chunk.audio:
                 await ws.send_bytes(encode_audio_frame(chunk.audio))
 
-        # Send terminator (zero-length frame)
         await ws.send_bytes(encode_audio_frame(b""))
 
-        # Back to idle
         _connection_states[device_id] = DeviceState.IDLE
         await ws.send_json(StateMessage(state=DeviceState.IDLE).to_json())
 
     except Exception as e:
         logger.error(f"Dialogue error for {device_id}: {e}", exc_info=True)
         _connection_states[device_id] = DeviceState.ERROR
-        await ws.send_json(ErrorMessage(
-            code="DIALOGUE_ERROR",
-            message=str(e),
-        ).to_json())
-        # Recover after error
+        await ws.send_json(ErrorMessage(code="DIALOGUE_ERROR", message=str(e)).to_json())
         _connection_states[device_id] = DeviceState.IDLE
         await ws.send_json(StateMessage(state=DeviceState.IDLE).to_json())
 

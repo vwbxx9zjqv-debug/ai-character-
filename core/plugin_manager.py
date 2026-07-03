@@ -184,6 +184,9 @@ class PluginRegistry:
         from plugins.stt.local_whisper import LocalWhisperProvider
         self.register_stt(LocalWhisperProvider)
 
+        from plugins.stt.sense_voice import SenseVoiceProvider
+        self.register_stt(SenseVoiceProvider)
+
         # LLM providers
         from plugins.llm.claude import ClaudeProvider
         self.register_llm(ClaudeProvider)
@@ -203,6 +206,9 @@ class PluginRegistry:
 
         from plugins.tts.custom_endpoint import CustomEndpointProvider
         self.register_tts(CustomEndpointProvider)
+
+        from plugins.tts.minimax import MiniMaxTTSProvider
+        self.register_tts(MiniMaxTTSProvider)
 
         # User-upload voice models are loaded from DB at startup
         logger.info(

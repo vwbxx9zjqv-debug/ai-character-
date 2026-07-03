@@ -52,7 +52,14 @@ class WhisperAPIProvider(STTProvider):
 
         # Create a file-like object from audio bytes
         audio_file = BytesIO(audio)
-        audio_file.name = f"audio.{'ogg' if audio_format == 'opus' else 'wav'}"
+        if audio_format == "opus":
+            audio_file.name = "audio.ogg"
+        elif audio_format == "ogg":
+            audio_file.name = "audio.ogg"
+        elif audio_format == "wav":
+            audio_file.name = "audio.wav"
+        else:
+            audio_file.name = f"audio.{audio_format}"
 
         response = await self._client.audio.transcriptions.create(
             model=self._model,
