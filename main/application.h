@@ -85,6 +85,8 @@ public:
     void DismissAlert();
 
     void AbortSpeaking(AbortReason reason);
+    void ScheduleReconnect(int delay_ms = 3000);
+    void TryReconnect();
 
     /**
      * Toggle chat state (event-based, thread-safe)

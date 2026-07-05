@@ -124,6 +124,9 @@ public:
     bool IsAudioChannelOpened() const override;
     bool SendAudio(std::unique_ptr<AudioStreamPacket> packet) override;
     bool SendText(const std::string& text) override;
+    void SendStartListening(ListeningMode mode) override;
+    void SendStopListening() override;
+    void SendWakeWordDetected(const std::string& wake_word) override;
 
     // V3-specific: Send heartbeat
     void SendHeartbeat(const std::string& state, int wifi_rssi = 0);

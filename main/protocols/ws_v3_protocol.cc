@@ -171,6 +171,43 @@ void WsV3Protocol::SendSpeechSegment(int duration_ms, float vad_confidence,
     cJSON_Delete(root);
 }
 
+void WsV3Protocol::SendStartListening(ListeningMode mode) {
+    if (!IsAudioChannelOpened()) return;
+
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddNumberToObject(root, "v", WS_V3_PROTOCOL_VERSION);
+    cJSON_AddStringToObject(root, "type", WS_V3_TYPE_STATE);
+    cJSON_AddStringToObject(root, "state", WS_V3_STATE_LISTENING);
+    const char* mode_str = (mode == kListeningModeRealtime) ? "realtime" :
+                           (mode == kListeningModeAutoStop) ? "auto" : "manual";
+    cJSON_AddStringToObject(root, "mode", mode_str);
+    char* json_str = cJSON_PrintUnformatted(root);
+    SendText(std::string(json_str));
+    cJSON_free(json_str);
+    cJSON_Delete(root);
+    ESP_LOGI(TAG, "SendStartListening mode=%s", mode_str);
+}
+
+void WsV3Protocol::SendStopListening() {
+    if (!IsAudioChannelOpened()) return;
+
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddNumberToObject(root, "v", WS_V3_PROTOCOL_VERSION);
+    cJSON_AddStringToObject(root, "type", WS_V3_TYPE_STATE);
+    cJSON_AddStringToObject(root, "state", WS_V3_STATE_IDLE);
+    char* json_str = cJSON_PrintUnformatted(root);
+    SendText(std::string(json_str));
+    cJSON_free(json_str);
+    cJSON_Delete(root);
+    ESP_LOGI(TAG, "SendStopListening");
+}
+
+void WsV3Protocol::SendWakeWordDetected(const std::string& wake_word) {
+    // In our protocol, wake word triggers start of listening
+    ESP_LOGI(TAG, "Wake word detected: %s", wake_word.c_str());
+    SendStartListening(kListeningModeAutoStop);
+}
+
 void WsV3Protocol::StartHeartbeat(int interval_ms) {
     StopHeartbeat();
     esp_timer_create_args_t args = {};
