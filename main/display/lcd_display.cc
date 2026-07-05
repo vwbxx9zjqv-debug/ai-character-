@@ -3,6 +3,7 @@
 #include "settings.h"
 #include "lvgl_theme.h"
 #include "assets/lang_config.h"
+#include "hanayo_sprites/hanayo_sprites.h"
 
 #include <vector>
 #include <algorithm>
@@ -1079,6 +1080,27 @@ void LcdDisplay::SetEmotion(const char* emotion) {
         if (setup_ui_called_) {
             ESP_LOGW(TAG, "SetEmotion('%s') failed: emoji_image_ is nullptr (SetupUI() was called but emoji image not created)", emotion);
         }
+        return;
+    }
+
+    // Try Hanayo custom sprite first
+    const lv_image_dsc_t* hanayo_sprite = hanayo_get_sprite(emotion);
+    if (hanayo_sprite != nullptr) {
+        DisplayLockGuard lock(this);
+        if (gif_controller_) {
+            gif_controller_->Stop();
+            gif_controller_.reset();
+        }
+        lv_image_set_src(emoji_image_, hanayo_sprite);
+        lv_obj_add_flag(emoji_label_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(emoji_image_, LV_OBJ_FLAG_HIDDEN);
+
+#if CONFIG_USE_WECHAT_MESSAGE_STYLE
+        // In WeChat mode, hide neutral sprite when there are chat messages
+        if (strcmp(emotion, "neutral") == 0 && content_ != nullptr && lv_obj_get_child_cnt(content_) > 0) {
+            lv_obj_add_flag(emoji_image_, LV_OBJ_FLAG_HIDDEN);
+        }
+#endif
         return;
     }
 

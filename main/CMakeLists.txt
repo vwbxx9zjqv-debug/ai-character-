@@ -40,7 +40,13 @@ set(SOURCES "audio/audio_codec.cc"
             "main.cc"
             )
 
-set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg" "audio" "audio/demuxer" "protocols")
+set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg" "display/hanayo_sprites" "audio" "audio/demuxer" "protocols")
+
+# Add Hanayo custom character sprites
+file(GLOB HANAYO_SPRITE_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/display/hanayo_sprites/*.c
+)
+list(APPEND SOURCES ${HANAYO_SPRITE_SOURCES})
 
 # Add board common files
 list(APPEND SOURCES

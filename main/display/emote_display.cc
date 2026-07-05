@@ -137,9 +137,36 @@ EmoteDisplay::~EmoteDisplay()
 void EmoteDisplay::SetEmotion(const char* const emotion)
 {
     ESP_LOGI(TAG, "SetEmotion: %s", emotion);
-    if (emote_handle_ && emotion && strlen(emotion) > 0) {
-        emote_set_anim_emoji(emote_handle_, emotion);
+    if (!emote_handle_ || !emotion || strlen(emotion) == 0) return;
+
+    // Load static image from icon assets (.bin files in emoji_small/)
+    icon_data_t *icon_data = NULL;
+    esp_err_t ret = emote_get_icon_data_by_name(emote_handle_, emotion, &icon_data);
+
+    if (ret != ESP_OK || !icon_data) {
+        // Fallback to neutral
+        ESP_LOGW(TAG, "Icon not found for '%s', trying neutral", emotion);
+        ret = emote_get_icon_data_by_name(emote_handle_, "neutral", &icon_data);
     }
+
+    if (ret == ESP_OK && icon_data && icon_data->data && icon_data->size > 12) {
+        gfx_obj_t *char_img = emote_get_obj_by_name(emote_handle_, "char_sprite");
+        if (char_img) {
+            gfx_image_dsc_t img_dsc = {};
+            memcpy(&img_dsc.header, icon_data->data, sizeof(gfx_image_header_t));
+            img_dsc.data = (const uint8_t*)icon_data->data + sizeof(gfx_image_header_t);
+            img_dsc.data_size = icon_data->size - sizeof(gfx_image_header_t);
+
+            emote_lock(emote_handle_);
+            gfx_img_set_src(char_img, &img_dsc);
+            gfx_obj_set_visible(char_img, true);
+            emote_unlock(emote_handle_);
+            return;
+        }
+    }
+
+    // Fallback: try animation if image not available
+    emote_set_anim_emoji(emote_handle_, emotion);
 }
 
 void EmoteDisplay::SetChatMessage(const char* const role, const char* const content)
